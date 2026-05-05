@@ -1,0 +1,6 @@
+{
+  "name": "Remix: AI Slop Detective",
+  "description": "A tool to detect AI-generated 'slop' and the Ikea Effect in writing. It analyzes text for robotic tropes and lack of genuine insight.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
