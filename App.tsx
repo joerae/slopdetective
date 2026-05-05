@@ -386,7 +386,7 @@ function App() {
       
       {/* Footer */}
       <footer className="mt-12 border-t border-gray-200 pt-8 text-center text-gray-400 text-sm">
-        <p>&copy; 2025 Joe Raeburn</p>
+        <p>&copy; 2026 Joe Raeburn</p>
       </footer>
     </div>
   );
