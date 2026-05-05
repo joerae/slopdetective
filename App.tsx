@@ -22,6 +22,7 @@ function App() {
   
   // State holds the FULL definitions now, allowing for edits/adds/deletes
   const [activePatterns, setActivePatterns] = useState<PatternDefinition[]>(DETECTION_PATTERNS);
+  const canAnalyze = inputText.trim().length > 0;
 
   // Simulated progress bar effect
   useEffect(() => {
@@ -242,10 +243,10 @@ function App() {
                       <div className="mt-4 flex justify-end">
                         <button
                           onClick={handleAnalyze}
-                          disabled={status === AnalysisStatus.ANALYZING || inputText.length < 50}
+                          disabled={status === AnalysisStatus.ANALYZING || !canAnalyze}
                           className={`
                             flex items-center gap-2 px-6 py-3 rounded-lg font-bold transition-all w-full md:w-auto justify-center shadow-md
-                            ${status === AnalysisStatus.ANALYZING || inputText.length < 50
+                            ${status === AnalysisStatus.ANALYZING || !canAnalyze
                               ? 'bg-gray-100 text-gray-400 cursor-not-allowed shadow-none'
                               : 'bg-teal-600 hover:bg-teal-700 text-white hover:shadow-lg hover:shadow-teal-500/20 active:transform active:scale-95'
                             }
