@@ -8,6 +8,7 @@ import PatternCard from './components/PatternCard';
 import ConfigPanel from './components/ConfigPanel';
 import HighlightedText from './components/HighlightedText';
 import { DETECTION_PATTERNS } from './data/patterns';
+import { logClientError } from './services/errorLogger';
 
 function App() {
   const [inputText, setInputText] = useState('');
@@ -74,7 +75,14 @@ function App() {
       setProgress(100);
       setTimeout(() => setStatus(AnalysisStatus.COMPLETE), 500); // Slight delay to show 100%
     } catch (err) {
-      setError("Failed to analyze text. Please try again later.");
+      logClientError(err, {
+        source: "handleAnalyze",
+        metadata: {
+          textLength: inputText.length,
+          patternCount: activePatterns.length,
+        },
+      });
+      setError(err instanceof Error ? err.message : "Failed to analyze text. Please try again later.");
       setStatus(AnalysisStatus.ERROR);
     }
   };
