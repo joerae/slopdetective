@@ -96,7 +96,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ patterns, onPatternsChange, i
       </button>
 
       {isOpen && (
-        <div className="p-6 border-t border-gray-100 bg-gray-50/30 animate-fade-in rounded-b-2xl">
+        <div className="max-h-[50vh] overflow-y-auto overscroll-contain p-6 border-t border-gray-100 bg-gray-50/30 animate-fade-in rounded-b-2xl">
           
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4 border-b border-gray-200 pb-4">
             <div className="flex gap-2">
