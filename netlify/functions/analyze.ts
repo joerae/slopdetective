@@ -1,5 +1,7 @@
 import { analyzeTextForSlopServer } from "../../server/slopAnalyzer";
+import { classifyAnalysisError } from "../../server/analysisErrors";
 import { createRequestId, logError, logInfo, logWarn } from "../../server/logger";
+import { GEMINI_MODEL } from "../../shared/geminiModel";
 
 const jsonResponse = (statusCode: number, body: Record<string, unknown>) => ({
   statusCode,
@@ -39,6 +41,7 @@ export const handler = async (event: any, context: any) => {
       requestId,
       textLength: text.length,
       patternCount: patterns.length,
+      model: GEMINI_MODEL,
       deployContext: process.env.CONTEXT,
       siteName: process.env.SITE_NAME,
     });
@@ -62,14 +65,22 @@ export const handler = async (event: any, context: any) => {
       requestId,
     });
   } catch (error) {
+    const failure = classifyAnalysisError(error);
+
     logError("analysis_failed", {
       requestId,
       durationMs: Date.now() - startedAt,
+      model: GEMINI_MODEL,
+      errorCode: failure.errorCode,
+      statusCode: failure.statusCode,
+      retryable: failure.retryable,
       error,
     });
 
-    return jsonResponse(500, {
-      error: "Analysis failed. Please try again later.",
+    return jsonResponse(failure.statusCode, {
+      error: failure.publicMessage,
+      code: failure.errorCode,
+      retryable: failure.retryable,
       requestId,
     });
   }

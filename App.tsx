@@ -9,6 +9,7 @@ import ConfigPanel from './components/ConfigPanel';
 import HighlightedText from './components/HighlightedText';
 import { DETECTION_PATTERNS } from './data/patterns';
 import { logClientError } from './services/errorLogger';
+import { GEMINI_MODEL_LABEL } from './shared/geminiModel';
 
 function App() {
   const [inputText, setInputText] = useState('');
@@ -175,7 +176,7 @@ function App() {
               <div className="text-xs font-mono text-gray-400 uppercase tracking-widest mb-1">System Status</div>
               <div className="flex items-center gap-2 justify-end">
                 <span className="w-2 h-2 rounded-full bg-teal-500 animate-pulse"></span>
-                <span className="text-gray-600 text-sm font-medium">Gemini 2.5 Flash Online</span>
+                <span className="text-gray-600 text-sm font-medium">{GEMINI_MODEL_LABEL} Online</span>
               </div>
             </div>
           </div>

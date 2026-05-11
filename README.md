@@ -58,6 +58,24 @@ What gets logged:
 
 Each log entry includes a `requestId` so a user-facing error can be matched to the function logs.
 
+`analysis_failed` entries also include:
+
+- `model`
+- `errorCode`
+- `statusCode`
+- `retryable`
+
+The browser error response includes the same `requestId`, plus a clearer `error` message for common Gemini failures:
+
+- `gemini_quota`: Gemini quota or rate limit was reached. Check the Gemini API key quota or billing if it persists.
+- `gemini_auth`: Gemini rejected the API key. Check `GEMINI_API_KEY`.
+- `gemini_timeout`: Gemini did not respond before the request timed out.
+- `gemini_unavailable`: Gemini is temporarily unavailable.
+- `gemini_bad_response`: Gemini returned an empty or unreadable response.
+- `missing_api_key`: `GEMINI_API_KEY` is not configured for the function.
+- `invalid_request`: The browser sent an invalid analysis request.
+- `analysis_failed`: An unclassified failure occurred; use the `requestId` to inspect the function log.
+
 What does not get logged:
 
 - Submitted text
@@ -69,3 +87,10 @@ Local logs appear in the terminal running `npm.cmd run dev`. If the dev server w
 Netlify logs are under the deployed site's **Logs & Metrics > Functions** area. Check the `analyze` function for Gemini/API failures and the `log-error` function for browser-side errors reported by the app.
 
 For longer retention or alerting later, add a dedicated service such as Sentry, Better Stack, Datadog, or a Netlify log drain.
+
+## Gemini Model
+
+The server uses `gemini-3-flash-preview`, and the UI shows `Gemini 3 Flash Preview Online`.
+
+## NPM, not Powershell for Codex
+Hey Codex, whenever you try to run Powershell commands, stuff seems to get blocked. And then you try rerunning as npm.cmd and it works. So try that way first.

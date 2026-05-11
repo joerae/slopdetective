@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
 import { analyzeTextForSlopServer } from "./slopAnalyzer";
+import { classifyAnalysisError } from "./analysisErrors";
 import { createRequestId, logError, logInfo, logWarn } from "./logger";
+import { GEMINI_MODEL } from "../shared/geminiModel";
 
 const MAX_BODY_SIZE = 1_000_000;
 
@@ -70,6 +72,7 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
             requestId,
             textLength: text.length,
             patternCount: patterns.length,
+            model: GEMINI_MODEL,
             runtime: "vite-dev",
           });
 
@@ -90,15 +93,23 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
 
           sendJson(response, 200, { analysis, requestId });
         } catch (error) {
+          const failure = classifyAnalysisError(error);
+
           logError("analysis_failed", {
             requestId,
             durationMs: Date.now() - startedAt,
+            model: GEMINI_MODEL,
+            errorCode: failure.errorCode,
+            statusCode: failure.statusCode,
+            retryable: failure.retryable,
             runtime: "vite-dev",
             error,
           });
 
-          sendJson(response, 500, {
-            error: "Analysis failed. Please try again later.",
+          sendJson(response, failure.statusCode, {
+            error: failure.publicMessage,
+            code: failure.errorCode,
+            retryable: failure.retryable,
             requestId,
           });
         }

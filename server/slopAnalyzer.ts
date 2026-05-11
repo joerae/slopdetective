@@ -1,5 +1,7 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import type { SlopAnalysis, PatternDefinition, PatternMatch } from "../types";
+import { PublicAnalysisError } from "./analysisErrors";
+import { GEMINI_MODEL } from "../shared/geminiModel";
 
 interface AnalyzeInput {
   text: string;
@@ -84,15 +86,30 @@ const countWords = (text: string): number => {
 
 export const analyzeTextForSlopServer = async ({ text, patterns, apiKey }: AnalyzeInput): Promise<SlopAnalysis> => {
   if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not configured.");
+    throw new PublicAnalysisError("GEMINI_API_KEY is not configured.", {
+      errorCode: "missing_api_key",
+      publicMessage: "Analysis is not configured correctly. The site owner needs to set GEMINI_API_KEY.",
+      statusCode: 500,
+      retryable: false,
+    });
   }
 
   if (!text.trim()) {
-    throw new Error("No text was provided for analysis.");
+    throw new PublicAnalysisError("No text was provided for analysis.", {
+      errorCode: "invalid_request",
+      publicMessage: "No text was provided for analysis.",
+      statusCode: 400,
+      retryable: false,
+    });
   }
 
   if (!Array.isArray(patterns) || patterns.length === 0) {
-    throw new Error("No detection patterns were provided.");
+    throw new PublicAnalysisError("No detection patterns were provided.", {
+      errorCode: "invalid_request",
+      publicMessage: "No detection patterns were provided.",
+      statusCode: 400,
+      retryable: false,
+    });
   }
 
   const ai = new GoogleGenAI({ apiKey });
@@ -134,7 +151,7 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey }: Analy
     `;
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: GEMINI_MODEL,
     contents: prompt,
     config: {
       responseMimeType: "application/json",
@@ -144,9 +161,26 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey }: Analy
   });
 
   const jsonText = response.text;
-  if (!jsonText) throw new Error("No response from Gemini.");
+  if (!jsonText) {
+    throw new PublicAnalysisError("No response from Gemini.", {
+      errorCode: "gemini_bad_response",
+      publicMessage: "Gemini returned an empty response. Please try again.",
+      statusCode: 502,
+      retryable: true,
+    });
+  }
 
-  const data = JSON.parse(jsonText) as SlopAnalysis;
+  let data: SlopAnalysis;
+  try {
+    data = JSON.parse(jsonText) as SlopAnalysis;
+  } catch (error) {
+    throw new PublicAnalysisError(error instanceof Error ? error.message : "Gemini returned invalid JSON.", {
+      errorCode: "gemini_bad_response",
+      publicMessage: "Gemini returned an unreadable response. Please try again.",
+      statusCode: 502,
+      retryable: true,
+    });
+  }
 
   if (data.patternMatches) {
     data.patternMatches = backfillMatches(data.patternMatches, patterns);
