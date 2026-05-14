@@ -1,7 +1,7 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { PatternMatch, PatternDefinition } from '../types';
-import { Quote, CheckCircle, AlertCircle, Info, X } from 'lucide-react';
+import { Quote, CheckCircle, AlertCircle, Info, X, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface PatternCardProps {
   match: PatternMatch;
@@ -10,7 +10,17 @@ interface PatternCardProps {
 }
 
 const PatternCard: React.FC<PatternCardProps> = ({ match, definition, onDismissEvidence }) => {
+  const [isEvidenceExpanded, setIsEvidenceExpanded] = useState(false);
   const score = match.score;
+  const visibleEvidenceLimit = 3;
+  const evidence = match.evidence || [];
+  const evidenceCount = evidence.length;
+  const instanceCount = Math.max(match.instanceCount ?? evidenceCount, evidenceCount);
+  const hiddenEvidenceCount = Math.max(evidenceCount - visibleEvidenceLimit, 0);
+  const hasMoreEvidence = hiddenEvidenceCount > 0;
+  const visibleEvidence = isEvidenceExpanded
+    ? evidence
+    : evidence.slice(0, visibleEvidenceLimit);
   
   // Color Logic:
   // 70-100: Red (Severe)
@@ -100,14 +110,39 @@ const PatternCard: React.FC<PatternCardProps> = ({ match, definition, onDismissE
       </div>
 
       {/* Evidence Section */}
-      {match.evidence && match.evidence.length > 0 ? (
+      {evidenceCount > 0 ? (
         <div className="space-y-3">
-          <h5 className="text-xs font-bold text-gray-400 uppercase flex items-center gap-2 tracking-wider">
-            <Quote className="w-3 h-3" />
-            Evidence Found
-          </h5>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h5 className="text-xs font-bold text-gray-400 uppercase flex items-center gap-2 tracking-wider">
+              <Quote className="w-3 h-3" />
+              Evidence Found
+              <span className="normal-case tracking-normal font-semibold text-gray-400">
+                ({visibleEvidence.length} of {instanceCount} shown)
+              </span>
+            </h5>
+            {hasMoreEvidence && (
+              <button
+                type="button"
+                onClick={() => setIsEvidenceExpanded(!isEvidenceExpanded)}
+                className="inline-flex items-center gap-1 self-start rounded border border-gray-200 bg-white px-2 py-1 text-xs font-bold text-gray-500 hover:border-gray-300 hover:text-gray-800 transition-colors"
+              >
+                {isEvidenceExpanded ? (
+                  <>
+                    <ChevronUp className="w-3 h-3" />
+                    Show less
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="w-3 h-3" />
+                    Show {hiddenEvidenceCount} more
+                  </>
+                )}
+              </button>
+            )}
+          </div>
           <div className="space-y-3">
-            {match.evidence.map((quote, idx) => (
+            {visibleEvidence.map((quote, idx) => {
+              return (
               <div key={idx} className="group relative bg-white border border-gray-200 rounded p-3 text-sm text-gray-700 italic border-l-4 border-l-gray-300 leading-relaxed shadow-sm hover:border-gray-300 transition-colors pr-8">
                 "{quote}"
                 
@@ -121,7 +156,7 @@ const PatternCard: React.FC<PatternCardProps> = ({ match, definition, onDismissE
                   </button>
                 )}
               </div>
-            ))}
+            )})}
           </div>
         </div>
       ) : (

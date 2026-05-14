@@ -5,6 +5,11 @@ export interface ReleaseNote {
 }
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+  {
+    version: "1.33",
+    date: "2026-05-14",
+    note: "Compact evidence view with full instance counting.",
+  },
  
   {
     version: "1.32",

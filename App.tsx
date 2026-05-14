@@ -16,6 +16,26 @@ import { CURRENT_RELEASE, RELEASE_NOTES } from './shared/releaseNotes';
 const numberFormatter = new Intl.NumberFormat('en-US');
 const formatCount = (value: number) => numberFormatter.format(value);
 
+const calculatePatternScore = (instanceCount: number, wordCount: number, tolerance: number) => {
+  if (instanceCount <= 0 || wordCount <= 0 || tolerance <= 0) return 0;
+
+  const density = (instanceCount / wordCount) * 1000;
+  const rawScore = (density / tolerance) * 50;
+  const roundedToNearestTen = Math.round(rawScore / 10) * 10;
+
+  return Math.min(100, roundedToNearestTen);
+};
+
+const formatPatternExplanation = (instanceCount: number, wordCount: number, dismissedCount: number) => {
+  const density = wordCount > 0 ? (instanceCount / wordCount) * 1000 : 0;
+  const base = `${instanceCount} instances detected (${density.toFixed(2)} per 1,000 words)`;
+
+  if (dismissedCount <= 0) return base;
+
+  const instanceLabel = dismissedCount === 1 ? 'instance' : 'instances';
+  return `${base}. ${dismissedCount} ${instanceLabel} marked as OK by user.`;
+};
+
 function App() {
   const [inputText, setInputText] = useState('');
   const [status, setStatus] = useState<AnalysisStatus>(AnalysisStatus.IDLE);
@@ -129,7 +149,7 @@ function App() {
     if (matchIndex === -1) return;
 
     const match = { ...newResult.patternMatches[matchIndex] };
-    const oldEvidenceCount = match.evidence.length;
+    const oldInstanceCount = Math.max(match.instanceCount ?? match.evidence.length, 0);
     
     // Initialize dismissedCount if not present
     const currentDismissed = match.dismissedCount || 0;
@@ -139,21 +159,19 @@ function App() {
     const newEvidence = [...match.evidence];
     newEvidence.splice(evidenceIndex, 1);
     match.evidence = newEvidence;
+    match.instanceCount = Math.max(0, oldInstanceCount - 1);
     match.dismissedCount = newDismissedCount;
 
-    // Scale the score proportionally
-    // New Score = Old Score * (New Count / Old Count)
-    // If we removed the last item, score goes to 0
-    if (oldEvidenceCount > 0) {
-      const ratio = newEvidence.length / oldEvidenceCount;
-      match.score = Math.round(match.score * ratio);
-    }
+    const patternDef = activePatterns.find(p => p.id === match.patternId);
+    match.score = calculatePatternScore(
+      match.instanceCount,
+      newResult.wordCount || 0,
+      patternDef?.defaultTolerance || 1
+    );
 
     // Update explanation text to reflect changes
-    // Format: "7 instances flagged in 580 words. 1 instance marked as OK by user."
     const wordCount = newResult.wordCount || 0;
-    const instanceLabel = newDismissedCount === 1 ? 'instance' : 'instances';
-    match.explanation = `${newEvidence.length} instances flagged in ${wordCount} words. ${newDismissedCount} ${instanceLabel} marked as OK by user.`;
+    match.explanation = formatPatternExplanation(match.instanceCount, wordCount, newDismissedCount);
     
     // Update the match in the list
     newResult.patternMatches[matchIndex] = match;

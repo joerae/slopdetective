@@ -12,7 +12,8 @@ export interface PatternMatch {
   patternId: string;
   name: string;
   score: number; // 0-100 severity of this specific pattern
-  evidence: string[]; // Quotes from the text
+  instanceCount?: number; // Total detected instances, which can exceed returned evidence samples
+  evidence: string[]; // Sample quotes from the text
   explanation: string; // Brief explanation of why this was flagged
   dismissedCount?: number; // Client-side tracking of user-dismissed items
 }

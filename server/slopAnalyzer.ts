@@ -11,6 +11,9 @@ interface AnalyzeInput {
   timeoutMs?: number;
 }
 
+const ANALYSIS_PATTERN_CHUNK_SIZE = 4;
+const ANALYSIS_MAX_PARALLEL_REQUESTS = 2;
+
 // Dynamically build the schema based on our strict typescript types.
 const ANALYSIS_SCHEMA: Schema = {
   type: Type.OBJECT,
@@ -28,6 +31,10 @@ const ANALYSIS_SCHEMA: Schema = {
           patternId: { type: Type.STRING, description: "Must match the ID provided in the prompt instructions." },
           name: { type: Type.STRING, description: "Name of the pattern found." },
           score: { type: Type.NUMBER, description: "0-100 severity based on calculated DENSITY formula. ROUND TO NEAREST 10." },
+          instanceCount: {
+            type: Type.NUMBER,
+            description: "Total number of detected instances for this pattern, including instances not included in the evidence samples.",
+          },
           evidence: {
             type: Type.ARRAY,
             maxItems: "24",
@@ -39,7 +46,7 @@ const ANALYSIS_SCHEMA: Schema = {
           },
           explanation: { type: Type.STRING, description: "Quantitative note including exact density. Format: 'X instances detected (Y per 1,000 words)'." },
         },
-        required: ["patternId", "name", "score", "evidence", "explanation"],
+        required: ["patternId", "name", "score", "instanceCount", "evidence", "explanation"],
       },
     },
   },
@@ -66,23 +73,63 @@ export const getWritingStyle = (score: number): 'Human' | 'Hybrid' | 'AI-Heavy' 
   return 'Human';
 };
 
-const backfillMatches = (matches: PatternMatch[], activePatterns: PatternDefinition[]): PatternMatch[] => {
-  const existingIds = new Set(matches.map(m => m.patternId));
-  const completeList = [...matches];
+const calculatePatternScore = (instanceCount: number, wordCount: number, tolerance: number): number => {
+  if (instanceCount <= 0 || wordCount <= 0 || tolerance <= 0) return 0;
 
-  activePatterns.forEach(pattern => {
-    if (!existingIds.has(pattern.id)) {
-      completeList.push({
-        patternId: pattern.id,
-        name: pattern.name,
-        score: 0,
-        evidence: [],
-        explanation: "No indicators detected.",
-      });
+  const density = (instanceCount / wordCount) * 1000;
+  const rawScore = (density / tolerance) * 50;
+  const roundedToNearestTen = Math.round(rawScore / 10) * 10;
+
+  return Math.min(100, roundedToNearestTen);
+};
+
+const formatPatternExplanation = (instanceCount: number, wordCount: number): string => {
+  const density = wordCount > 0 ? (instanceCount / wordCount) * 1000 : 0;
+  return `${instanceCount} instances detected (${density.toFixed(2)} per 1,000 words)`;
+};
+
+const sanitizeInstanceCount = (match: PatternMatch): number => {
+  if (typeof match.instanceCount === "number" && Number.isFinite(match.instanceCount)) {
+    return Math.max(0, Math.round(match.instanceCount));
+  }
+
+  return match.evidence?.length || 0;
+};
+
+const backfillMatches = (matches: PatternMatch[], activePatterns: PatternDefinition[], wordCount: number): PatternMatch[] => {
+  const matchByPatternId = new Map<string, PatternMatch>();
+  matches.forEach(match => {
+    if (typeof match.patternId === "string" && !matchByPatternId.has(match.patternId)) {
+      matchByPatternId.set(match.patternId, match);
     }
   });
 
-  return completeList;
+  return activePatterns.map(pattern => {
+    const match = matchByPatternId.get(pattern.id);
+
+    if (!match) {
+      return {
+        patternId: pattern.id,
+        name: pattern.name,
+        score: 0,
+        instanceCount: 0,
+        evidence: [],
+        explanation: "No indicators detected.",
+      };
+    }
+
+    const instanceCount = sanitizeInstanceCount(match);
+
+    return {
+      ...match,
+      patternId: pattern.id,
+      name: pattern.name,
+      instanceCount,
+      evidence: Array.isArray(match.evidence) ? match.evidence : [],
+      score: calculatePatternScore(instanceCount, wordCount, pattern?.defaultTolerance || 1),
+      explanation: formatPatternExplanation(instanceCount, wordCount),
+    };
+  });
 };
 
 const countWords = (text: string): number => {
@@ -110,6 +157,157 @@ const getUsageSummary = (response: Awaited<ReturnType<GoogleGenAI["models"]["gen
   return usage
     ? `prompt=${usage.promptTokenCount ?? "unknown"}, candidates=${usage.candidatesTokenCount ?? "unknown"}, thoughts=${usage.thoughtsTokenCount ?? "unknown"}, total=${usage.totalTokenCount ?? "unknown"}`
     : "usage=unavailable";
+};
+
+const buildAnalysisPrompt = (analysisText: string, patterns: PatternDefinition[]) => {
+  const patternInstructions = patterns.map(p => {
+    const tolerance = p.defaultTolerance;
+    const toleranceInstruction = `SCORING RULE: User Tolerance is set to **${tolerance} instances per 1,000 words**. Calculate the density of this pattern ($D$). Your Score MUST be calculated as: ($D$ / ${tolerance}) * 50. Cap at 100. Round result to nearest 10.`;
+
+    return `ID: "${p.id}"\nNAME: "${p.name}"\nINSTRUCTION: ${p.promptInstruction}\n${toleranceInstruction}`;
+  }).join("\n\n");
+
+  return `
+      You are a **Forensic Text Analyst**. Your job is to objectively quantify linguistic patterns common in Large Language Models (LLMs).
+
+      **CRITICAL STYLE RULES:**
+      1. **Tone:** Neutral, scientific, and data-driven. Avoid judgmental words.
+      2. **Phrasing:** Use "High frequency observed" or "Patterns consistent with synthetic generation."
+      3. **Explanations:** MUST follow the format: "X instances detected (Y per 1,000 words)".
+      4. **Caricature Mimicry:** Watch out for text that tries too hard to have a "Voice".
+      5. **ROUNDING:** ROUND ALL SCORES TO THE NEAREST 10 (e.g. 0, 10, 20... 90, 100).
+
+      **DENSITY IS KEY:**
+      - **Do not score based on raw counts alone.**
+      - Always calculate the density (instances per 1000 words) before scoring.
+      - **RESPECT THE SCORING RULE provided for each pattern.**
+      - Ignore any hardcoded scoring rules inside the INSTRUCTION text (like "Score High if found"). Only use the SCORING RULE formula.
+      - If no rule is provided, use common sense: High Density = High Score.
+
+      Analyze the text against the following patterns. For EACH pattern:
+      - Count every instance in instanceCount, even if there are more than the returned evidence samples.
+      - Return up to 24 evidence quotes as samples for highlighting and review.
+      - Keep each quote under 20 words.
+
+      --- START PATTERNS ---
+      ${patternInstructions}
+      --- END PATTERNS ---
+
+      Text to analyze:
+      """
+      ${analysisText}
+      """
+    `;
+};
+
+const parseAnalysisResponse = (
+  response: Awaited<ReturnType<GoogleGenAI["models"]["generateContent"]>>,
+): SlopAnalysis => {
+  const jsonText = response.text;
+  if (!jsonText) {
+    throw new PublicAnalysisError("No response from Gemini.", {
+      errorCode: "gemini_bad_response",
+      publicMessage: "Gemini returned an empty response. Please try again.",
+      statusCode: 502,
+      retryable: true,
+    });
+  }
+
+  try {
+    return JSON.parse(jsonText) as SlopAnalysis;
+  } catch (error) {
+    const finishReason = getFinishReason(response);
+    const usageSummary = getUsageSummary(response);
+    const parseMessage = error instanceof Error ? error.message : "Gemini returned invalid JSON.";
+    const diagnosticMessage =
+      finishReason === "MAX_TOKENS"
+        ? `${parseMessage} Gemini stopped at maxOutputTokens=${ANALYSIS_GEMINI_MAX_OUTPUT_TOKENS}. ${usageSummary}.`
+        : `${parseMessage} Gemini finishReason=${finishReason ?? "unknown"}. ${usageSummary}.`;
+
+    throw new PublicAnalysisError(diagnosticMessage, {
+      errorCode: "gemini_bad_response",
+      publicMessage:
+        finishReason === "MAX_TOKENS"
+          ? "Gemini's response was too long to parse. Please try again."
+          : "Gemini returned an unreadable response. Please try again.",
+      statusCode: 502,
+      retryable: true,
+    });
+  }
+};
+
+const requestGeminiAnalysis = async (
+  ai: GoogleGenAI,
+  analysisText: string,
+  patterns: PatternDefinition[],
+  timeoutMs: number,
+): Promise<SlopAnalysis> => {
+  const timeoutController = createTimeoutController(timeoutMs);
+
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: buildAnalysisPrompt(analysisText, patterns),
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: ANALYSIS_SCHEMA,
+        temperature: 0,
+        maxOutputTokens: ANALYSIS_GEMINI_MAX_OUTPUT_TOKENS,
+        abortSignal: timeoutController.signal,
+        httpOptions: {
+          timeout: timeoutMs,
+        },
+      },
+    });
+  } finally {
+    timeoutController.clear();
+  }
+
+  return parseAnalysisResponse(response);
+};
+
+const chunkPatterns = (patterns: PatternDefinition[]) => {
+  const chunks: PatternDefinition[][] = [];
+
+  for (let i = 0; i < patterns.length; i += ANALYSIS_PATTERN_CHUNK_SIZE) {
+    chunks.push(patterns.slice(i, i + ANALYSIS_PATTERN_CHUNK_SIZE));
+  }
+
+  return chunks;
+};
+
+const buildVerdict = (slopScore: number, matches: PatternMatch[]) => {
+  const topMatch = matches.find(match => match.score > 0);
+
+  if (!topMatch || slopScore < 20) return "Few synthetic patterns detected.";
+  if (slopScore < 40) return `Some synthetic patterns detected: ${topMatch.name}.`;
+  if (slopScore < 65) return `Multiple synthetic patterns detected: ${topMatch.name}.`;
+  return `High frequency synthetic patterns detected: ${topMatch.name}.`;
+};
+
+const mergeAnalyses = (
+  analyses: SlopAnalysis[],
+  patterns: PatternDefinition[],
+  wordCount: number,
+): SlopAnalysis => {
+  const patternMatches = backfillMatches(
+    analyses.flatMap(analysis => analysis.patternMatches || []),
+    patterns,
+    wordCount,
+  );
+
+  patternMatches.sort((a, b) => b.score - a.score);
+
+  const slopScore = calculateCalculatedSlopScore(patternMatches, patterns);
+
+  return {
+    slopScore,
+    verdict: analyses.length === 1 ? analyses[0].verdict : buildVerdict(slopScore, patternMatches),
+    writingStyle: getWritingStyle(slopScore),
+    patternMatches,
+    wordCount,
+  };
 };
 
 export const analyzeTextForSlopServer = async ({ text, patterns, apiKey, timeoutMs = ANALYSIS_GEMINI_TIMEOUT_MS }: AnalyzeInput): Promise<SlopAnalysis> => {
@@ -142,106 +340,18 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey, timeout
 
   const ai = new GoogleGenAI({ apiKey });
   const analysisText = truncateAnalysisInput(text).text;
-  const timeoutController = createTimeoutController(timeoutMs);
+  const wordCount = countWords(analysisText);
+  const patternChunks = chunkPatterns(patterns);
+  const analyses: SlopAnalysis[] = [];
 
-  const patternInstructions = patterns.map(p => {
-    const tolerance = p.defaultTolerance;
-    const toleranceInstruction = `SCORING RULE: User Tolerance is set to **${tolerance} instances per 1,000 words**. Calculate the density of this pattern ($D$). Your Score MUST be calculated as: ($D$ / ${tolerance}) * 50. Cap at 100. Round result to nearest 10.`;
+  for (let i = 0; i < patternChunks.length; i += ANALYSIS_MAX_PARALLEL_REQUESTS) {
+    const batch = patternChunks.slice(i, i + ANALYSIS_MAX_PARALLEL_REQUESTS);
+    const batchAnalyses = await Promise.all(
+      batch.map(chunk => requestGeminiAnalysis(ai, analysisText, chunk, timeoutMs)),
+    );
 
-    return `ID: "${p.id}"\nNAME: "${p.name}"\nINSTRUCTION: ${p.promptInstruction}\n${toleranceInstruction}`;
-  }).join("\n\n");
-
-  const prompt = `
-      You are a **Forensic Text Analyst**. Your job is to objectively quantify linguistic patterns common in Large Language Models (LLMs).
-
-      **CRITICAL STYLE RULES:**
-      1. **Tone:** Neutral, scientific, and data-driven. Avoid judgmental words.
-      2. **Phrasing:** Use "High frequency observed" or "Patterns consistent with synthetic generation."
-      3. **Explanations:** MUST follow the format: "X instances detected (Y per 1,000 words)".
-      4. **Caricature Mimicry:** Watch out for text that tries too hard to have a "Voice".
-      5. **ROUNDING:** ROUND ALL SCORES TO THE NEAREST 10 (e.g. 0, 10, 20... 90, 100).
-
-      **DENSITY IS KEY:**
-      - **Do not score based on raw counts alone.**
-      - Always calculate the density (instances per 1000 words) before scoring.
-      - **RESPECT THE SCORING RULE provided for each pattern.**
-      - Ignore any hardcoded scoring rules inside the INSTRUCTION text (like "Score High if found"). Only use the SCORING RULE formula.
-      - If no rule is provided, use common sense: High Density = High Score.
-
-      Analyze the text against the following patterns. For EACH pattern, provide a score (0-100) and evidence. List all instances of evidence: if you find 8 examples, list all 8; do not truncate the list.
-      Keep each quote under 20 words.
-
-      --- START PATTERNS ---
-      ${patternInstructions}
-      --- END PATTERNS ---
-
-      Text to analyze:
-      """
-      ${analysisText}
-      """
-    `;
-
-  let response;
-  try {
-    response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: ANALYSIS_SCHEMA,
-        temperature: 0,
-        maxOutputTokens: ANALYSIS_GEMINI_MAX_OUTPUT_TOKENS,
-        abortSignal: timeoutController.signal,
-        httpOptions: {
-          timeout: timeoutMs,
-        },
-      },
-    });
-  } finally {
-    timeoutController.clear();
+    analyses.push(...batchAnalyses);
   }
 
-  const jsonText = response.text;
-  if (!jsonText) {
-    throw new PublicAnalysisError("No response from Gemini.", {
-      errorCode: "gemini_bad_response",
-      publicMessage: "Gemini returned an empty response. Please try again.",
-      statusCode: 502,
-      retryable: true,
-    });
-  }
-
-  let data: SlopAnalysis;
-  try {
-    data = JSON.parse(jsonText) as SlopAnalysis;
-  } catch (error) {
-    const finishReason = getFinishReason(response);
-    const usageSummary = getUsageSummary(response);
-    const parseMessage = error instanceof Error ? error.message : "Gemini returned invalid JSON.";
-    const diagnosticMessage =
-      finishReason === "MAX_TOKENS"
-        ? `${parseMessage} Gemini stopped at maxOutputTokens=${ANALYSIS_GEMINI_MAX_OUTPUT_TOKENS}. ${usageSummary}.`
-        : `${parseMessage} Gemini finishReason=${finishReason ?? "unknown"}. ${usageSummary}.`;
-
-    throw new PublicAnalysisError(diagnosticMessage, {
-      errorCode: "gemini_bad_response",
-      publicMessage:
-        finishReason === "MAX_TOKENS"
-          ? "Gemini's response was too long to parse. Please try again."
-          : "Gemini returned an unreadable response. Please try again.",
-      statusCode: 502,
-      retryable: true,
-    });
-  }
-
-  if (data.patternMatches) {
-    data.patternMatches = backfillMatches(data.patternMatches, patterns);
-    data.patternMatches.sort((a, b) => b.score - a.score);
-
-    data.slopScore = calculateCalculatedSlopScore(data.patternMatches, patterns);
-    data.writingStyle = getWritingStyle(data.slopScore);
-    data.wordCount = countWords(analysisText);
-  }
-
-  return data;
+  return mergeAnalyses(analyses, patterns, wordCount);
 };
