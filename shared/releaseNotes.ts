@@ -6,6 +6,12 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.2",
+    date: "2026-05-14",
+    note: "Longer timeouts through background functions.",
+  },
+
+  {
     version: "1.1",
     date: "2026-05-14",
     note: "Stronger error logging and retries added.",
