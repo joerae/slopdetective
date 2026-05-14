@@ -18,7 +18,7 @@ export const RELEASE_NOTES: ReleaseNote[] = [
   },
   {
     version: "1.0",
-    date: "2026-05-14",
+    date: "2026-01-28",
     note: "Initial release of AI Slop Detective.",
   },
 ];
