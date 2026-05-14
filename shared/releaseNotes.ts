@@ -6,6 +6,13 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.3",
+    date: "2026-05-14",
+    note: "Changed to using Gemini Flash 2.5",
+  },
+
+
+  {
     version: "1.2",
     date: "2026-05-14",
     note: "Longer timeouts through background functions.",
