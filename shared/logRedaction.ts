@@ -1,5 +1,5 @@
 const GOOGLE_API_KEY_PATTERN = /AIza[0-9A-Za-z\-_]{20,}/g;
-const SENSITIVE_FIELD_PATTERN = /^(api[-_]?key|gemini[-_]?api[-_]?key|authorization|cookie|set-cookie|x-api-key)$/i;
+const SENSITIVE_FIELD_PATTERN = /^(api[-_]?key|gemini[-_]?api[-_]?key|authorization|cookie|set-cookie|x-api-key|x-analysis-job-token|analysis-job-token|accessToken|refreshToken|clientSecret)$/i;
 
 export const redactSensitiveString = (value: string): string => {
   return value.replace(GOOGLE_API_KEY_PATTERN, match => `${match.slice(0, 4)}...[redacted]`);

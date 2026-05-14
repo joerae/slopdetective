@@ -4,7 +4,11 @@ import { analyzeTextForSlopServer } from "./slopAnalyzer";
 import { classifyAnalysisError } from "./analysisErrors";
 import { createRequestId, logError, logInfo, logWarn } from "./logger";
 import { GEMINI_MODEL } from "../shared/geminiModel";
-import { ANALYSIS_GEMINI_TIMEOUT_MS } from "../shared/analysisLimits";
+import { ANALYSIS_BACKGROUND_GEMINI_TIMEOUT_MS } from "../shared/analysisLimits";
+import {
+  ANALYSIS_JOB_POLL_INTERVAL_MS,
+  type AnalysisJobRecord,
+} from "../shared/analysisJobs";
 
 const MAX_BODY_SIZE = 1_000_000;
 
@@ -44,6 +48,108 @@ const sendJson = (response: ServerResponse, statusCode: number, payload: Record<
   response.end(JSON.stringify(payload));
 };
 
+const localAnalysisJobs = new Map<string, AnalysisJobRecord>();
+
+const updateLocalAnalysisJob = (jobId: string, update: Partial<AnalysisJobRecord>) => {
+  const existing = localAnalysisJobs.get(jobId);
+  if (!existing) {
+    throw new Error(`Analysis job ${jobId} was not found.`);
+  }
+
+  const nextJob: AnalysisJobRecord = {
+    ...existing,
+    ...update,
+    updatedAt: new Date().toISOString(),
+  };
+
+  localAnalysisJobs.set(jobId, nextJob);
+  return nextJob;
+};
+
+const runLocalAnalysisJob = async ({
+  jobId,
+  requestId,
+  text,
+  patterns,
+  apiKey,
+}: {
+  jobId: string;
+  requestId: string;
+  text: string;
+  patterns: any[];
+  apiKey?: string;
+}) => {
+  const startedAt = Date.now();
+
+  try {
+    updateLocalAnalysisJob(jobId, {
+      status: "processing",
+    });
+
+    logInfo("analysis_background_started", {
+      requestId,
+      jobId,
+      textLength: text.length,
+      patternCount: patterns.length,
+      model: GEMINI_MODEL,
+      timeoutMs: ANALYSIS_BACKGROUND_GEMINI_TIMEOUT_MS,
+      runtime: "vite-dev",
+    });
+
+    const analysis = await analyzeTextForSlopServer({
+      text,
+      patterns,
+      apiKey,
+      timeoutMs: ANALYSIS_BACKGROUND_GEMINI_TIMEOUT_MS,
+    });
+
+    updateLocalAnalysisJob(jobId, {
+      status: "complete",
+      analysis,
+    });
+
+    logInfo("analysis_background_completed", {
+      requestId,
+      jobId,
+      durationMs: Date.now() - startedAt,
+      wordCount: analysis.wordCount,
+      slopScore: analysis.slopScore,
+      patternCount: analysis.patternMatches.length,
+      runtime: "vite-dev",
+    });
+  } catch (error) {
+    const failure = classifyAnalysisError(error);
+
+    try {
+      updateLocalAnalysisJob(jobId, {
+        status: "failed",
+        error: failure.publicMessage,
+        code: failure.errorCode,
+        retryable: failure.retryable,
+      });
+    } catch (jobUpdateError) {
+      logError("analysis_background_job_update_failed", {
+        requestId,
+        jobId,
+        runtime: "vite-dev",
+        error: jobUpdateError,
+      });
+    }
+
+    logError("analysis_background_failed", {
+      requestId,
+      jobId,
+      durationMs: Date.now() - startedAt,
+      model: GEMINI_MODEL,
+      errorCode: failure.errorCode,
+      statusCode: failure.statusCode,
+      retryable: failure.retryable,
+      runtime: "vite-dev",
+      error,
+    });
+  }
+};
+
 export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
   name: "local-netlify-functions",
   configureServer(server) {
@@ -68,32 +174,71 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
           const body = await readJsonBody(request);
           const text = typeof body.text === "string" ? body.text : "";
           const patterns = Array.isArray(body.patterns) ? body.patterns : [];
+          const jobId = createRequestId();
 
           logInfo("analysis_started", {
+            requestId,
+            jobId,
+            textLength: text.length,
+            patternCount: patterns.length,
+            model: GEMINI_MODEL,
+            runtime: "vite-dev",
+          });
+
+          if (!text.trim()) {
+            sendJson(response, 400, {
+              error: "No text was provided for analysis.",
+              code: "invalid_request",
+              retryable: false,
+              requestId,
+            });
+            return;
+          }
+
+          if (!patterns.length) {
+            sendJson(response, 400, {
+              error: "No detection patterns were provided.",
+              code: "invalid_request",
+              retryable: false,
+              requestId,
+            });
+            return;
+          }
+
+          const now = new Date().toISOString();
+          localAnalysisJobs.set(jobId, {
+            id: jobId,
+            status: "queued",
+            createdAt: now,
+            updatedAt: now,
             requestId,
             textLength: text.length,
             patternCount: patterns.length,
             model: GEMINI_MODEL,
-            timeoutMs: ANALYSIS_GEMINI_TIMEOUT_MS,
-            runtime: "vite-dev",
           });
 
-          const analysis = await analyzeTextForSlopServer({
+          void runLocalAnalysisJob({
+            jobId,
+            requestId,
             text,
             patterns,
             apiKey,
           });
 
-          logInfo("analysis_completed", {
+          logInfo("analysis_queued", {
             requestId,
+            jobId,
             durationMs: Date.now() - startedAt,
-            wordCount: analysis.wordCount,
-            slopScore: analysis.slopScore,
-            patternCount: analysis.patternMatches.length,
             runtime: "vite-dev",
           });
 
-          sendJson(response, 200, { analysis, requestId });
+          sendJson(response, 202, {
+            jobId,
+            status: "queued",
+            statusUrl: `/.netlify/functions/analyze-status?jobId=${encodeURIComponent(jobId)}`,
+            retryAfterMs: ANALYSIS_JOB_POLL_INTERVAL_MS,
+            requestId,
+          });
         } catch (error) {
           const failure = classifyAnalysisError(error);
 
@@ -116,6 +261,69 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
           });
         }
 
+        return;
+      }
+
+      if (pathname === "/.netlify/functions/analyze-status") {
+        const requestId = createRequestId();
+
+        if (request.method !== "GET") {
+          sendJson(response, 405, { error: "Method not allowed.", requestId });
+          return;
+        }
+
+        const url = new URL(request.url || "", "http://localhost");
+        const jobId = url.searchParams.get("jobId");
+
+        if (!jobId) {
+          sendJson(response, 400, {
+            error: "Missing analysis job id.",
+            code: "invalid_request",
+            retryable: false,
+            requestId,
+          });
+          return;
+        }
+
+        const job = localAnalysisJobs.get(jobId);
+        if (!job) {
+          sendJson(response, 404, {
+            error: "Analysis job was not found.",
+            code: "analysis_job_not_found",
+            retryable: false,
+            requestId,
+          });
+          return;
+        }
+
+        if (job.status === "complete") {
+          sendJson(response, 200, {
+            jobId: job.id,
+            status: job.status,
+            requestId: job.requestId,
+            analysis: job.analysis,
+          });
+          return;
+        }
+
+        if (job.status === "failed") {
+          sendJson(response, 200, {
+            jobId: job.id,
+            status: job.status,
+            requestId: job.requestId,
+            error: job.error || "Analysis failed. Please try again later.",
+            code: job.code || "analysis_failed",
+            retryable: job.retryable !== false,
+          });
+          return;
+        }
+
+        sendJson(response, 200, {
+          jobId: job.id,
+          status: job.status,
+          requestId: job.requestId,
+          retryAfterMs: ANALYSIS_JOB_POLL_INTERVAL_MS,
+        });
         return;
       }
 

@@ -31,9 +31,19 @@ This is a Vite React app. Do not open `index.html` directly and do not use the V
 
 If you are using Command Prompt instead of PowerShell, `npm install` and `npm run dev` are also fine. In PowerShell on this machine, use `npm.cmd` because the `npm.ps1` wrapper may be blocked by Windows execution policy.
 
+## Analysis Functions
+
+Analysis runs asynchronously on Netlify:
+
+- `/.netlify/functions/analyze` validates the request, creates a job, starts the background worker, and returns `202`.
+- `/.netlify/functions/analyze-background` runs Gemini and writes the result to Netlify Blobs.
+- `/.netlify/functions/analyze-status?jobId=...` returns queued/processing/complete/failed status for browser polling.
+
+The background worker can wait longer than a normal Netlify request, so slow Gemini responses no longer hit the 30 second foreground function limit. Job records are stored in Netlify Blobs and include status/result metadata, not the full submitted text.
+
 ## API Key on Netlify
 
-The Gemini API key must stay server-side. The browser app calls `/.netlify/functions/analyze`, and that Netlify Function reads `process.env.GEMINI_API_KEY`.
+The Gemini API key must stay server-side. The background analysis function reads `process.env.GEMINI_API_KEY`.
 
 For Netlify:
 
@@ -41,6 +51,8 @@ For Netlify:
 2. If Netlify asks for scopes, make sure the variable is available to **Functions**.
 3. Mark it as secret / contains secret values.
 4. Do not create a `VITE_GEMINI_API_KEY` or otherwise expose the key to frontend code.
+
+You can optionally set `ANALYSIS_JOB_TOKEN` as a separate secret for the foreground function to authorize calls to the background worker. If it is not set, the app derives an internal token from `GEMINI_API_KEY`.
 
 For local development, keep `GEMINI_API_KEY` in `.env.local`. That file is ignored by Git.
 
@@ -51,14 +63,16 @@ Logging is intentionally simple for now: structured JSON to the local terminal a
 What gets logged:
 
 - `analysis_started`
-- `analysis_completed`
+- `analysis_queued`
+- `analysis_background_started`
+- `analysis_background_completed`
 - `analysis_failed`
 - `client_error`
 - `client_error_logging_failed`
 
 Each log entry includes a `requestId` so a user-facing error can be matched to the function logs.
 
-`analysis_failed` entries also include:
+Failure entries also include:
 
 - `model`
 - `errorCode`
@@ -84,7 +98,7 @@ What does not get logged:
 
 Local logs appear in the terminal running `npm.cmd run dev`. If the dev server was started in the background by Codex, check `vite-dev.out.log` and `vite-dev.err.log`.
 
-Netlify logs are under the deployed site's **Logs & Metrics > Functions** area. Check the `analyze` function for Gemini/API failures and the `log-error` function for browser-side errors reported by the app.
+Netlify logs are under the deployed site's **Logs & Metrics > Functions** area. Check the `analyze`, `analyze-background`, and `analyze-status` functions for analysis failures, and the `log-error` function for browser-side errors reported by the app.
 
 For longer retention or alerting later, add a dedicated service such as Sentry, Better Stack, Datadog, or a Netlify log drain.
 

@@ -1,4 +1,10 @@
 import type { SlopAnalysis, PatternDefinition, PatternMatch } from "../types";
+import {
+  ANALYSIS_JOB_CLIENT_TIMEOUT_MS,
+  ANALYSIS_JOB_POLL_INTERVAL_MS,
+  type AnalysisJobStatusResponse,
+  type AnalysisJobSubmitResponse,
+} from "../shared/analysisJobs";
 
 interface AnalyzeResponse {
   analysis?: SlopAnalysis;
@@ -6,6 +12,10 @@ interface AnalyzeResponse {
   code?: string;
   retryable?: boolean;
   requestId?: string;
+  jobId?: string;
+  status?: string;
+  statusUrl?: string;
+  retryAfterMs?: number;
 }
 
 export class AnalysisRequestError extends Error {
@@ -73,6 +83,100 @@ export const getWritingStyle = (score: number): 'Human' | 'Hybrid' | 'AI-Heavy' 
   return 'Human';
 };
 
+const parseJsonResponse = async <T>(response: Response): Promise<{ payload: T; responseText: string; responseParseError?: string }> => {
+  const responseText = await response.text();
+
+  let payload = {} as T;
+  let responseParseError: string | undefined;
+  try {
+    payload = responseText ? JSON.parse(responseText) : {} as T;
+  } catch (error) {
+    responseParseError = error instanceof Error ? error.message : "Response was not valid JSON.";
+  }
+
+  return {
+    payload,
+    responseText,
+    responseParseError,
+  };
+};
+
+const sleep = (durationMs: number) => new Promise(resolve => setTimeout(resolve, durationMs));
+
+const pollAnalysisJob = async (
+  job: AnalysisJobSubmitResponse,
+  startedAt: number,
+): Promise<SlopAnalysis> => {
+  const endpoint = job.statusUrl;
+
+  while (performance.now() - startedAt < ANALYSIS_JOB_CLIENT_TIMEOUT_MS) {
+    await sleep(job.retryAfterMs || ANALYSIS_JOB_POLL_INTERVAL_MS);
+
+    let response: Response;
+    try {
+      response = await fetch(endpoint, {
+        method: "GET",
+        headers: {
+          "Accept": "application/json",
+        },
+      });
+    } catch (error) {
+      const durationMs = Math.round(performance.now() - startedAt);
+      const message = error instanceof Error ? error.message : "Network request failed.";
+
+      throw new AnalysisRequestError(`Analysis status could not be reached: ${message}`, {
+        requestId: job.requestId,
+        endpoint,
+        durationMs,
+        responseParseError: error instanceof Error ? error.name : undefined,
+      });
+    }
+
+    const durationMs = Math.round(performance.now() - startedAt);
+    const { payload, responseText, responseParseError } = await parseJsonResponse<AnalysisJobStatusResponse>(response);
+
+    if (!response.ok) {
+      throw new AnalysisRequestError(payload.error || "Analysis status failed. Please try again later.", {
+        requestId: payload.requestId || job.requestId,
+        status: response.status,
+        statusText: response.statusText,
+        code: payload.code,
+        retryable: payload.retryable,
+        endpoint,
+        durationMs,
+        responseParseError,
+        responseBodySnippet: responseText.slice(0, 500),
+      });
+    }
+
+    if (payload.status === "complete" && payload.analysis) {
+      return payload.analysis;
+    }
+
+    if (payload.status === "failed") {
+      throw new AnalysisRequestError(payload.error || "Analysis failed. Please try again later.", {
+        requestId: payload.requestId || job.requestId,
+        status: response.status,
+        statusText: response.statusText,
+        code: payload.code,
+        retryable: payload.retryable,
+        endpoint,
+        durationMs,
+        responseParseError,
+        responseBodySnippet: responseText.slice(0, 500),
+      });
+    }
+  }
+
+  throw new AnalysisRequestError("Analysis is still running. Please try again in a minute.", {
+    requestId: job.requestId,
+    code: "analysis_poll_timeout",
+    retryable: true,
+    endpoint,
+    durationMs: Math.round(performance.now() - startedAt),
+  });
+};
+
 export const analyzeTextForSlop = async (text: string, patterns: PatternDefinition[]): Promise<SlopAnalysis> => {
   const endpoint = "/.netlify/functions/analyze";
   const startedAt = performance.now();
@@ -97,18 +201,14 @@ export const analyzeTextForSlop = async (text: string, patterns: PatternDefiniti
     });
   }
 
-  const responseText = await response.text();
   const durationMs = Math.round(performance.now() - startedAt);
-
-  let payload: AnalyzeResponse = {};
-  let responseParseError: string | undefined;
-  try {
-    payload = responseText ? JSON.parse(responseText) : {};
-  } catch (error) {
-    responseParseError = error instanceof Error ? error.message : "Response was not valid JSON.";
-  }
+  const { payload, responseText, responseParseError } = await parseJsonResponse<AnalyzeResponse>(response);
 
   if (!response.ok || !payload.analysis) {
+    if (response.status === 202 && payload.jobId && payload.statusUrl) {
+      return await pollAnalysisJob(payload as AnalysisJobSubmitResponse, startedAt);
+    }
+
     const fallbackMessage = response.ok ? "Analysis response was empty." : "Analysis failed. Please try again later.";
     const message = payload.error || fallbackMessage;
     const suffix = payload.requestId ? ` Reference: ${payload.requestId}` : "";

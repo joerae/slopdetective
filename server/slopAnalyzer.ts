@@ -8,6 +8,7 @@ interface AnalyzeInput {
   text: string;
   patterns: PatternDefinition[];
   apiKey?: string;
+  timeoutMs?: number;
 }
 
 // Dynamically build the schema based on our strict typescript types.
@@ -95,7 +96,7 @@ const createTimeoutController = (timeoutMs: number) => {
   };
 };
 
-export const analyzeTextForSlopServer = async ({ text, patterns, apiKey }: AnalyzeInput): Promise<SlopAnalysis> => {
+export const analyzeTextForSlopServer = async ({ text, patterns, apiKey, timeoutMs = ANALYSIS_GEMINI_TIMEOUT_MS }: AnalyzeInput): Promise<SlopAnalysis> => {
   if (!apiKey) {
     throw new PublicAnalysisError("GEMINI_API_KEY is not configured.", {
       errorCode: "missing_api_key",
@@ -125,7 +126,7 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey }: Analy
 
   const ai = new GoogleGenAI({ apiKey });
   const analysisText = truncateAnalysisInput(text).text;
-  const timeoutController = createTimeoutController(ANALYSIS_GEMINI_TIMEOUT_MS);
+  const timeoutController = createTimeoutController(timeoutMs);
 
   const patternInstructions = patterns.map(p => {
     const tolerance = p.defaultTolerance;
@@ -176,7 +177,7 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey }: Analy
         maxOutputTokens: 2048,
         abortSignal: timeoutController.signal,
         httpOptions: {
-          timeout: ANALYSIS_GEMINI_TIMEOUT_MS,
+          timeout: timeoutMs,
         },
       },
     });
