@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Sparkles, AlertTriangle, FileSearch, RefreshCw, ChevronRight, ScanLine, Edit, RotateCcw } from 'lucide-react';
+import { Sparkles, AlertTriangle, FileSearch, RefreshCw, ChevronRight, ScanLine, Edit, RotateCcw, X } from 'lucide-react';
 import { AnalysisRequestError, analyzeTextForSlop, calculateCalculatedSlopScore, getWritingStyle } from './services/geminiService';
 import { SlopAnalysis, AnalysisStatus, PatternDefinition } from './types';
 import SlopChart from './components/SlopChart';
@@ -11,6 +11,7 @@ import { DETECTION_PATTERNS } from './data/patterns';
 import { logClientError } from './services/errorLogger';
 import { GEMINI_MODEL_LABEL } from './shared/geminiModel';
 import { ANALYSIS_MAX_INPUT_CHARS, ANALYSIS_MAX_INPUT_PAGES, truncateAnalysisInput } from './shared/analysisLimits';
+import { CURRENT_RELEASE, RELEASE_NOTES } from './shared/releaseNotes';
 
 const numberFormatter = new Intl.NumberFormat('en-US');
 const formatCount = (value: number) => numberFormatter.format(value);
@@ -27,6 +28,7 @@ function App() {
   
   // UI State
   const [isConfigPanelOpen, setIsConfigPanelOpen] = useState(false);
+  const [isReleaseNotesOpen, setIsReleaseNotesOpen] = useState(false);
   
   // State holds the FULL definitions now, allowing for edits/adds/deletes
   const [activePatterns, setActivePatterns] = useState<PatternDefinition[]>(DETECTION_PATTERNS);
@@ -454,9 +456,61 @@ function App() {
       </div>
       
       {/* Footer */}
-      <footer className="mt-12 border-t border-gray-200 pt-8 text-center text-gray-400 text-sm">
-        <p>&copy; 2026 Joe Raeburn</p>
+      <footer className="mt-12 border-t border-gray-200 pt-8 text-center text-gray-400 text-sm relative">
+        <div className="flex flex-col items-center gap-2">
+          <p>&copy; 2026 Joe Raeburn</p>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2">
+            <button
+              type="button"
+              onClick={() => setIsReleaseNotesOpen(true)}
+              className="font-mono text-gray-500 underline decoration-dotted underline-offset-4 hover:text-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500/30 rounded"
+              title="View release notes"
+            >
+              v{CURRENT_RELEASE.version}
+            </button>
+            <span className="hidden sm:inline text-gray-300">|</span>
+            <span>{CURRENT_RELEASE.note}</span>
+          </div>
+        </div>
       </footer>
+
+      {isReleaseNotesOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/30 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="release-notes-title"
+          onClick={() => setIsReleaseNotesOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl bg-white border border-gray-200 shadow-2xl overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
+              <h2 id="release-notes-title" className="text-base font-bold text-gray-900">Release Notes</h2>
+              <button
+                type="button"
+                onClick={() => setIsReleaseNotesOpen(false)}
+                className="p-1 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-teal-500/30"
+                title="Close release notes"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {RELEASE_NOTES.map(release => (
+                <div key={release.version} className="px-5 py-4 text-left">
+                  <div className="flex items-baseline justify-between gap-4 mb-1">
+                    <h3 className="font-mono text-sm font-bold text-gray-900">v{release.version}</h3>
+                    <span className="text-xs text-gray-400">{release.date}</span>
+                  </div>
+                  <p className="text-sm text-gray-600">{release.note}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
