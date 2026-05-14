@@ -5,6 +5,13 @@ export interface ReleaseNote {
 }
 
 export const RELEASE_NOTES: ReleaseNote[] = [
+ 
+  {
+    version: "1.32",
+    date: "2026-05-14",
+    note: "Bring back all evidence",
+  },
+ 
   {
     version: "1.3",
     date: "2026-05-14",

@@ -30,7 +30,7 @@ const ANALYSIS_SCHEMA: Schema = {
           score: { type: Type.NUMBER, description: "0-100 severity based on calculated DENSITY formula. ROUND TO NEAREST 10." },
           evidence: {
             type: Type.ARRAY,
-            maxItems: "3",
+            maxItems: "24",
             items: {
               type: Type.STRING,
               maxLength: "240",
@@ -168,8 +168,8 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey, timeout
       - Ignore any hardcoded scoring rules inside the INSTRUCTION text (like "Score High if found"). Only use the SCORING RULE formula.
       - If no rule is provided, use common sense: High Density = High Score.
 
-      Analyze the text against the following patterns. For EACH pattern, provide a score (0-100) and evidence.
-      Limit evidence to the three strongest direct quotes per pattern. Keep each quote under 20 words.
+      Analyze the text against the following patterns. For EACH pattern, provide a score (0-100) and evidence. List all instances of evidence: if you find 8 examples, list all 8; do not truncate the list.
+      Keep each quote under 20 words.
 
       --- START PATTERNS ---
       ${patternInstructions}
