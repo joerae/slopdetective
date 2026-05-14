@@ -2,6 +2,7 @@ import { analyzeTextForSlopServer } from "../../server/slopAnalyzer";
 import { classifyAnalysisError } from "../../server/analysisErrors";
 import { createRequestId, logError, logInfo, logWarn } from "../../server/logger";
 import { GEMINI_MODEL } from "../../shared/geminiModel";
+import { ANALYSIS_GEMINI_TIMEOUT_MS } from "../../shared/analysisLimits";
 
 const jsonResponse = (statusCode: number, body: Record<string, unknown>) => ({
   statusCode,
@@ -42,6 +43,7 @@ export const handler = async (event: any, context: any) => {
       textLength: text.length,
       patternCount: patterns.length,
       model: GEMINI_MODEL,
+      timeoutMs: ANALYSIS_GEMINI_TIMEOUT_MS,
       deployContext: process.env.CONTEXT,
       siteName: process.env.SITE_NAME,
     });

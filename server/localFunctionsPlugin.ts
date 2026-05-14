@@ -4,6 +4,7 @@ import { analyzeTextForSlopServer } from "./slopAnalyzer";
 import { classifyAnalysisError } from "./analysisErrors";
 import { createRequestId, logError, logInfo, logWarn } from "./logger";
 import { GEMINI_MODEL } from "../shared/geminiModel";
+import { ANALYSIS_GEMINI_TIMEOUT_MS } from "../shared/analysisLimits";
 
 const MAX_BODY_SIZE = 1_000_000;
 
@@ -73,6 +74,7 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
             textLength: text.length,
             patternCount: patterns.length,
             model: GEMINI_MODEL,
+            timeoutMs: ANALYSIS_GEMINI_TIMEOUT_MS,
             runtime: "vite-dev",
           });
 

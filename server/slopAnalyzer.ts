@@ -2,7 +2,7 @@ import { GoogleGenAI, Type, Schema } from "@google/genai";
 import type { SlopAnalysis, PatternDefinition, PatternMatch } from "../types";
 import { PublicAnalysisError } from "./analysisErrors";
 import { GEMINI_MODEL } from "../shared/geminiModel";
-import { truncateAnalysisInput } from "../shared/analysisLimits";
+import { ANALYSIS_GEMINI_TIMEOUT_MS, truncateAnalysisInput } from "../shared/analysisLimits";
 
 interface AnalyzeInput {
   text: string;
@@ -85,6 +85,16 @@ const countWords = (text: string): number => {
   return trimmed ? trimmed.split(/\s+/).length : 0;
 };
 
+const createTimeoutController = (timeoutMs: number) => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  return {
+    signal: controller.signal,
+    clear: () => clearTimeout(timeout),
+  };
+};
+
 export const analyzeTextForSlopServer = async ({ text, patterns, apiKey }: AnalyzeInput): Promise<SlopAnalysis> => {
   if (!apiKey) {
     throw new PublicAnalysisError("GEMINI_API_KEY is not configured.", {
@@ -115,6 +125,7 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey }: Analy
 
   const ai = new GoogleGenAI({ apiKey });
   const analysisText = truncateAnalysisInput(text).text;
+  const timeoutController = createTimeoutController(ANALYSIS_GEMINI_TIMEOUT_MS);
 
   const patternInstructions = patterns.map(p => {
     const tolerance = p.defaultTolerance;
@@ -141,6 +152,7 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey }: Analy
       - If no rule is provided, use common sense: High Density = High Score.
 
       Analyze the text against the following patterns. For EACH pattern, provide a score (0-100) and evidence.
+      Limit evidence to the three strongest direct quotes per pattern. Keep each quote under 20 words.
 
       --- START PATTERNS ---
       ${patternInstructions}
@@ -152,15 +164,25 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey }: Analy
       """
     `;
 
-  const response = await ai.models.generateContent({
-    model: GEMINI_MODEL,
-    contents: prompt,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: ANALYSIS_SCHEMA,
-      temperature: 0,
-    },
-  });
+  let response;
+  try {
+    response = await ai.models.generateContent({
+      model: GEMINI_MODEL,
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: ANALYSIS_SCHEMA,
+        temperature: 0,
+        maxOutputTokens: 2048,
+        abortSignal: timeoutController.signal,
+        httpOptions: {
+          timeout: ANALYSIS_GEMINI_TIMEOUT_MS,
+        },
+      },
+    });
+  } finally {
+    timeoutController.clear();
+  }
 
   const jsonText = response.text;
   if (!jsonText) {

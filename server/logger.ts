@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isSensitiveLogField, redactSensitiveFieldValue, redactSensitiveString } from "../shared/logRedaction";
 
 type LogLevel = "info" | "warn" | "error";
 
@@ -11,15 +12,15 @@ export const createRequestId = (): string => {
 };
 
 const scrubString = (value: string): string => {
-  return value
-    .replace(/AIza[0-9A-Za-z\-_]{20,}/g, "[redacted-google-api-key]")
-    .slice(0, MAX_STRING_LENGTH);
+  return redactSensitiveString(value).slice(0, MAX_STRING_LENGTH);
 };
 
-const sanitizeValue = (value: unknown): unknown => {
+const sanitizeValue = (value: unknown, key?: string): unknown => {
+  if (key && isSensitiveLogField(key)) return redactSensitiveFieldValue(value);
+
   if (typeof value === "string") return scrubString(value);
   if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
-  if (Array.isArray(value)) return value.slice(0, 20).map(sanitizeValue);
+  if (Array.isArray(value)) return value.slice(0, 20).map(entry => sanitizeValue(entry));
   if (value instanceof Error) {
     return {
       name: value.name,
@@ -29,7 +30,10 @@ const sanitizeValue = (value: unknown): unknown => {
   }
   if (typeof value === "object" && value) {
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, sanitizeValue(entry)])
+      Object.entries(value as Record<string, unknown>).map(([entryKey, entry]) => [
+        entryKey,
+        sanitizeValue(entry, entryKey),
+      ])
     );
   }
 

@@ -70,6 +70,13 @@ const readStatusCodeFromMessage = (message: string): number | undefined => {
   return Number.parseInt(match[1], 10);
 };
 
+const readErrorName = (error: unknown): string | undefined => {
+  if (!error || typeof error !== "object") return undefined;
+
+  const name = (error as Record<string, unknown>).name;
+  return typeof name === "string" ? name : undefined;
+};
+
 export const classifyAnalysisError = (error: unknown): ClassifiedAnalysisError => {
   if (error instanceof PublicAnalysisError) {
     return {
@@ -82,7 +89,9 @@ export const classifyAnalysisError = (error: unknown): ClassifiedAnalysisError =
 
   const message = stringifyUnknown(error);
   const statusCode = readStatusCode(error) ?? readStatusCodeFromMessage(message);
+  const errorName = readErrorName(error);
   const lowerMessage = message.toLowerCase();
+  const lowerName = errorName?.toLowerCase() ?? "";
 
   if (error instanceof SyntaxError) {
     return {
@@ -127,9 +136,11 @@ export const classifyAnalysisError = (error: unknown): ClassifiedAnalysisError =
   if (
     statusCode === 408 ||
     statusCode === 504 ||
+    lowerName.includes("abort") ||
     lowerMessage.includes("timeout") ||
     lowerMessage.includes("timed out") ||
-    lowerMessage.includes("deadline")
+    lowerMessage.includes("deadline") ||
+    lowerMessage.includes("aborted")
   ) {
     return {
       errorCode: "gemini_timeout",
