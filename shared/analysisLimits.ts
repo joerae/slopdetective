@@ -2,6 +2,7 @@ export const ANALYSIS_MAX_INPUT_PAGES = 5;
 export const ANALYSIS_MAX_INPUT_CHARS = 15000;
 export const ANALYSIS_GEMINI_TIMEOUT_MS = 28000;
 export const ANALYSIS_BACKGROUND_GEMINI_TIMEOUT_MS = 120000;
+export const ANALYSIS_GEMINI_MAX_OUTPUT_TOKENS = 48000;
 
 export const truncateAnalysisInput = (text: string) => {
   if (text.length <= ANALYSIS_MAX_INPUT_CHARS) {

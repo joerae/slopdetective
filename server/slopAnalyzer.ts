@@ -2,7 +2,7 @@ import { GoogleGenAI, Type, Schema } from "@google/genai";
 import type { SlopAnalysis, PatternDefinition, PatternMatch } from "../types";
 import { PublicAnalysisError } from "./analysisErrors";
 import { GEMINI_MODEL } from "../shared/geminiModel";
-import { ANALYSIS_GEMINI_TIMEOUT_MS, truncateAnalysisInput } from "../shared/analysisLimits";
+import { ANALYSIS_GEMINI_MAX_OUTPUT_TOKENS, ANALYSIS_GEMINI_TIMEOUT_MS, truncateAnalysisInput } from "../shared/analysisLimits";
 
 interface AnalyzeInput {
   text: string;
@@ -30,7 +30,11 @@ const ANALYSIS_SCHEMA: Schema = {
           score: { type: Type.NUMBER, description: "0-100 severity based on calculated DENSITY formula. ROUND TO NEAREST 10." },
           evidence: {
             type: Type.ARRAY,
-            items: { type: Type.STRING },
+            maxItems: "3",
+            items: {
+              type: Type.STRING,
+              maxLength: "240",
+            },
             description: "Direct quotes from the text that exhibit the pattern.",
           },
           explanation: { type: Type.STRING, description: "Quantitative note including exact density. Format: 'X instances detected (Y per 1,000 words)'." },
@@ -94,6 +98,18 @@ const createTimeoutController = (timeoutMs: number) => {
     signal: controller.signal,
     clear: () => clearTimeout(timeout),
   };
+};
+
+const getFinishReason = (response: Awaited<ReturnType<GoogleGenAI["models"]["generateContent"]>>): string | undefined => {
+  return response.candidates?.[0]?.finishReason;
+};
+
+const getUsageSummary = (response: Awaited<ReturnType<GoogleGenAI["models"]["generateContent"]>>) => {
+  const usage = response.usageMetadata;
+
+  return usage
+    ? `prompt=${usage.promptTokenCount ?? "unknown"}, candidates=${usage.candidatesTokenCount ?? "unknown"}, thoughts=${usage.thoughtsTokenCount ?? "unknown"}, total=${usage.totalTokenCount ?? "unknown"}`
+    : "usage=unavailable";
 };
 
 export const analyzeTextForSlopServer = async ({ text, patterns, apiKey, timeoutMs = ANALYSIS_GEMINI_TIMEOUT_MS }: AnalyzeInput): Promise<SlopAnalysis> => {
@@ -174,7 +190,7 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey, timeout
         responseMimeType: "application/json",
         responseSchema: ANALYSIS_SCHEMA,
         temperature: 0,
-        maxOutputTokens: 2048,
+        maxOutputTokens: ANALYSIS_GEMINI_MAX_OUTPUT_TOKENS,
         abortSignal: timeoutController.signal,
         httpOptions: {
           timeout: timeoutMs,
@@ -199,9 +215,20 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey, timeout
   try {
     data = JSON.parse(jsonText) as SlopAnalysis;
   } catch (error) {
-    throw new PublicAnalysisError(error instanceof Error ? error.message : "Gemini returned invalid JSON.", {
+    const finishReason = getFinishReason(response);
+    const usageSummary = getUsageSummary(response);
+    const parseMessage = error instanceof Error ? error.message : "Gemini returned invalid JSON.";
+    const diagnosticMessage =
+      finishReason === "MAX_TOKENS"
+        ? `${parseMessage} Gemini stopped at maxOutputTokens=${ANALYSIS_GEMINI_MAX_OUTPUT_TOKENS}. ${usageSummary}.`
+        : `${parseMessage} Gemini finishReason=${finishReason ?? "unknown"}. ${usageSummary}.`;
+
+    throw new PublicAnalysisError(diagnosticMessage, {
       errorCode: "gemini_bad_response",
-      publicMessage: "Gemini returned an unreadable response. Please try again.",
+      publicMessage:
+        finishReason === "MAX_TOKENS"
+          ? "Gemini's response was too long to parse. Please try again."
+          : "Gemini returned an unreadable response. Please try again.",
       statusCode: 502,
       retryable: true,
     });
