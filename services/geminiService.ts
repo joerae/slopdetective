@@ -3,18 +3,47 @@ import type { SlopAnalysis, PatternDefinition, PatternMatch } from "../types";
 interface AnalyzeResponse {
   analysis?: SlopAnalysis;
   error?: string;
+  code?: string;
+  retryable?: boolean;
   requestId?: string;
 }
 
 export class AnalysisRequestError extends Error {
   requestId?: string;
   status?: number;
+  statusText?: string;
+  code?: string;
+  retryable?: boolean;
+  endpoint?: string;
+  durationMs?: number;
+  responseParseError?: string;
+  responseBodySnippet?: string;
 
-  constructor(message: string, options: { requestId?: string; status?: number } = {}) {
+  constructor(
+    message: string,
+    options: {
+      requestId?: string;
+      status?: number;
+      statusText?: string;
+      code?: string;
+      retryable?: boolean;
+      endpoint?: string;
+      durationMs?: number;
+      responseParseError?: string;
+      responseBodySnippet?: string;
+    } = {}
+  ) {
     super(message);
     this.name = "AnalysisRequestError";
     this.requestId = options.requestId;
     this.status = options.status;
+    this.statusText = options.statusText;
+    this.code = options.code;
+    this.retryable = options.retryable;
+    this.endpoint = options.endpoint;
+    this.durationMs = options.durationMs;
+    this.responseParseError = options.responseParseError;
+    this.responseBodySnippet = options.responseBodySnippet;
   }
 }
 
@@ -45,19 +74,38 @@ export const getWritingStyle = (score: number): 'Human' | 'Hybrid' | 'AI-Heavy' 
 };
 
 export const analyzeTextForSlop = async (text: string, patterns: PatternDefinition[]): Promise<SlopAnalysis> => {
-  const response = await fetch("/.netlify/functions/analyze", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ text, patterns }),
-  });
+  const endpoint = "/.netlify/functions/analyze";
+  const startedAt = performance.now();
+
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text, patterns }),
+    });
+  } catch (error) {
+    const durationMs = Math.round(performance.now() - startedAt);
+    const message = error instanceof Error ? error.message : "Network request failed.";
+
+    throw new AnalysisRequestError(`Analysis request could not reach the server: ${message}`, {
+      endpoint,
+      durationMs,
+      responseParseError: error instanceof Error ? error.name : undefined,
+    });
+  }
+
+  const responseText = await response.text();
+  const durationMs = Math.round(performance.now() - startedAt);
 
   let payload: AnalyzeResponse = {};
+  let responseParseError: string | undefined;
   try {
-    payload = await response.json();
-  } catch {
-    // Leave payload empty; the response status still tells us the request failed.
+    payload = responseText ? JSON.parse(responseText) : {};
+  } catch (error) {
+    responseParseError = error instanceof Error ? error.message : "Response was not valid JSON.";
   }
 
   if (!response.ok || !payload.analysis) {
@@ -68,6 +116,13 @@ export const analyzeTextForSlop = async (text: string, patterns: PatternDefiniti
     throw new AnalysisRequestError(`${message}${suffix}`, {
       requestId: payload.requestId,
       status: response.status,
+      statusText: response.statusText,
+      code: payload.code,
+      retryable: payload.retryable,
+      endpoint,
+      durationMs,
+      responseParseError,
+      responseBodySnippet: responseText.slice(0, 500),
     });
   }
 

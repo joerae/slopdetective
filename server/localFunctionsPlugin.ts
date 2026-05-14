@@ -135,6 +135,7 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
             name: body.name,
             message: body.message,
             stack: body.stack,
+            details: body.details,
             url: body.url,
             userAgent: body.userAgent,
             metadata: body.metadata,

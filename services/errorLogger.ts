@@ -8,6 +8,7 @@ interface ClientErrorPayload {
   name: string;
   message: string;
   stack?: string;
+  details?: Record<string, unknown>;
   url?: string;
   userAgent?: string;
   metadata?: Record<string, unknown>;
@@ -15,12 +16,25 @@ interface ClientErrorPayload {
 
 let globalHandlersInstalled = false;
 
+const normalizeCustomErrorFields = (error: Error) => {
+  const details: Record<string, unknown> = {};
+
+  Object.entries(error as unknown as Record<string, unknown>).forEach(([key, value]) => {
+    if (value !== undefined) {
+      details[key] = value;
+    }
+  });
+
+  return Object.keys(details).length ? details : undefined;
+};
+
 const normalizeError = (error: unknown) => {
   if (error instanceof Error) {
     return {
       name: error.name,
       message: error.message,
       stack: error.stack,
+      details: normalizeCustomErrorFields(error),
     };
   }
 
@@ -35,6 +49,7 @@ const normalizeError = (error: unknown) => {
     name: "UnknownError",
     message,
     stack: undefined,
+    details: undefined,
   };
 };
 

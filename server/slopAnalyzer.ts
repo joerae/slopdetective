@@ -2,6 +2,7 @@ import { GoogleGenAI, Type, Schema } from "@google/genai";
 import type { SlopAnalysis, PatternDefinition, PatternMatch } from "../types";
 import { PublicAnalysisError } from "./analysisErrors";
 import { GEMINI_MODEL } from "../shared/geminiModel";
+import { truncateAnalysisInput } from "../shared/analysisLimits";
 
 interface AnalyzeInput {
   text: string;
@@ -113,6 +114,7 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey }: Analy
   }
 
   const ai = new GoogleGenAI({ apiKey });
+  const analysisText = truncateAnalysisInput(text).text;
 
   const patternInstructions = patterns.map(p => {
     const tolerance = p.defaultTolerance;
@@ -146,7 +148,7 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey }: Analy
 
       Text to analyze:
       """
-      ${text.substring(0, 25000)}
+      ${analysisText}
       """
     `;
 
@@ -188,7 +190,7 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey }: Analy
 
     data.slopScore = calculateCalculatedSlopScore(data.patternMatches, patterns);
     data.writingStyle = getWritingStyle(data.slopScore);
-    data.wordCount = countWords(text);
+    data.wordCount = countWords(analysisText);
   }
 
   return data;

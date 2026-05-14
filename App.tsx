@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Sparkles, AlertTriangle, FileSearch, RefreshCw, ChevronRight, ScanLine, Edit, RotateCcw } from 'lucide-react';
-import { analyzeTextForSlop, calculateCalculatedSlopScore, getWritingStyle } from './services/geminiService';
+import { AnalysisRequestError, analyzeTextForSlop, calculateCalculatedSlopScore, getWritingStyle } from './services/geminiService';
 import { SlopAnalysis, AnalysisStatus, PatternDefinition } from './types';
 import SlopChart from './components/SlopChart';
 import PatternCard from './components/PatternCard';
@@ -10,12 +10,18 @@ import HighlightedText from './components/HighlightedText';
 import { DETECTION_PATTERNS } from './data/patterns';
 import { logClientError } from './services/errorLogger';
 import { GEMINI_MODEL_LABEL } from './shared/geminiModel';
+import { ANALYSIS_MAX_INPUT_CHARS, ANALYSIS_MAX_INPUT_PAGES, truncateAnalysisInput } from './shared/analysisLimits';
+
+const numberFormatter = new Intl.NumberFormat('en-US');
+const formatCount = (value: number) => numberFormatter.format(value);
 
 function App() {
   const [inputText, setInputText] = useState('');
   const [status, setStatus] = useState<AnalysisStatus>(AnalysisStatus.IDLE);
   const [result, setResult] = useState<SlopAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorRetryable, setErrorRetryable] = useState(true);
+  const [truncationNotice, setTruncationNotice] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [loadingMessage, setLoadingMessage] = useState("");
   
@@ -25,6 +31,7 @@ function App() {
   // State holds the FULL definitions now, allowing for edits/adds/deletes
   const [activePatterns, setActivePatterns] = useState<PatternDefinition[]>(DETECTION_PATTERNS);
   const canAnalyze = inputText.trim().length > 0;
+  const inputLimitReached = inputText.length >= ANALYSIS_MAX_INPUT_CHARS;
 
   // Simulated progress bar effect
   useEffect(() => {
@@ -68,6 +75,7 @@ function App() {
     
     setStatus(AnalysisStatus.ANALYZING);
     setError(null);
+    setErrorRetryable(true);
     setResult(null);
 
     try {
@@ -81,9 +89,12 @@ function App() {
         metadata: {
           textLength: inputText.length,
           patternCount: activePatterns.length,
+          maxInputChars: ANALYSIS_MAX_INPUT_CHARS,
+          inputLimitReached,
         },
       });
       setError(err instanceof Error ? err.message : "Failed to analyze text. Please try again later.");
+      setErrorRetryable(err instanceof AnalysisRequestError ? err.retryable !== false : true);
       setStatus(AnalysisStatus.ERROR);
     }
   };
@@ -91,6 +102,9 @@ function App() {
   const handleStartOver = () => {
     setInputText('');
     setResult(null);
+    setError(null);
+    setErrorRetryable(true);
+    setTruncationNotice(null);
     setStatus(AnalysisStatus.IDLE);
   };
 
@@ -98,6 +112,8 @@ function App() {
     // Keep result but allow editing
     // Actually we probably want to hide the result if we are editing?
     // Let's just go back to IDLE state but keep the text
+    setError(null);
+    setErrorRetryable(true);
     setStatus(AnalysisStatus.IDLE);
   };
 
@@ -147,6 +163,36 @@ function App() {
     newResult.writingStyle = getWritingStyle(newResult.slopScore);
 
     setResult(newResult);
+  };
+
+  const handleInputChange = (value: string) => {
+    const truncated = truncateAnalysisInput(value);
+
+    setInputText(truncated.text);
+    setTruncationNotice(
+      truncated.wasTruncated
+        ? `Input truncated to ${formatCount(ANALYSIS_MAX_INPUT_CHARS)} characters (${formatCount(truncated.truncatedCharCount)} removed).`
+        : null
+    );
+  };
+
+  const handleInputPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pastedText = event.clipboardData.getData('text');
+    if (!pastedText) return;
+
+    const target = event.currentTarget;
+    const selectionStart = target.selectionStart ?? inputText.length;
+    const selectionEnd = target.selectionEnd ?? inputText.length;
+    const nextValue = `${inputText.slice(0, selectionStart)}${pastedText}${inputText.slice(selectionEnd)}`;
+    const truncated = truncateAnalysisInput(nextValue);
+
+    if (!truncated.wasTruncated) return;
+
+    event.preventDefault();
+    setInputText(truncated.text);
+    setTruncationNotice(
+      `Pasted text was truncated to ${formatCount(ANALYSIS_MAX_INPUT_CHARS)} characters (${formatCount(truncated.truncatedCharCount)} removed).`
+    );
   };
 
   return (
@@ -216,7 +262,9 @@ function App() {
                       </button>
                     </div>
                   ) : (
-                    <span className="text-xs font-mono text-gray-400">{inputText.length} chars</span>
+                    <span className={`text-xs font-mono ${inputLimitReached ? 'text-amber-600 font-bold' : 'text-gray-400'}`}>
+                      {formatCount(inputText.length)} / {formatCount(ANALYSIS_MAX_INPUT_CHARS)} chars
+                    </span>
                   )}
                 </div>
 
@@ -234,7 +282,9 @@ function App() {
                     className="w-full flex-grow bg-white text-gray-900 rounded-lg p-4 focus:ring-2 focus:ring-teal-500/20 focus:border-teal-500 focus:outline-none resize-none text-sm leading-relaxed border border-gray-200 placeholder-gray-400 font-mono shadow-inner"
                     placeholder="Paste article, email, or LinkedIn post..."
                     value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
+                    onChange={(e) => handleInputChange(e.target.value)}
+                    onPaste={handleInputPaste}
+                    maxLength={ANALYSIS_MAX_INPUT_CHARS}
                     disabled={status === AnalysisStatus.ANALYZING}
                   />
                 )}
@@ -242,6 +292,12 @@ function App() {
                 {/* Config and Action Buttons - Only show when NOT analyzing or complete */}
                 {status !== AnalysisStatus.COMPLETE && (
                   <div className="mt-4 shrink-0">
+                      {(inputLimitReached || truncationNotice) && (
+                        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                          {truncationNotice || `Maximum reached: analysis uses the first ${formatCount(ANALYSIS_MAX_INPUT_CHARS)} characters, about ${ANALYSIS_MAX_INPUT_PAGES} pages.`}
+                        </div>
+                      )}
+
                       <ConfigPanel 
                         patterns={activePatterns} 
                         onPatternsChange={setActivePatterns}
@@ -326,12 +382,24 @@ function App() {
                 <AlertTriangle className="w-16 h-16 mb-4 text-red-400" />
                 <h3 className="text-xl font-bold mb-2 text-red-900">Analysis Failed</h3>
                 <p className="text-red-700">{error}</p>
-                <button 
-                  onClick={handleEdit}
-                  className="mt-6 px-4 py-2 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors text-sm font-bold"
-                >
-                  Go Back
-                </button>
+                <div className="mt-6 flex flex-col sm:flex-row gap-3">
+                  {errorRetryable && (
+                    <button
+                      onClick={handleAnalyze}
+                      disabled={!canAnalyze}
+                      className="inline-flex items-center justify-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:bg-red-200 disabled:cursor-not-allowed transition-colors text-sm font-bold"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                      Retry Analysis
+                    </button>
+                  )}
+                  <button 
+                    onClick={handleEdit}
+                    className="px-4 py-2 bg-white border border-red-200 text-red-600 rounded-lg hover:bg-red-50 transition-colors text-sm font-bold"
+                  >
+                    Go Back
+                  </button>
+                </div>
               </div>
             )}
 

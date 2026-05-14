@@ -32,6 +32,7 @@ export const handler = async (event: any, context: any) => {
       name: body.name,
       message: body.message,
       stack: body.stack,
+      details: body.details,
       url: body.url,
       userAgent: body.userAgent,
       metadata: body.metadata,
