@@ -7,7 +7,7 @@ export const DETECTION_PATTERNS: PatternDefinition[] = [
     "name": "The Robot Slip-up",
     "description": "Obvious artifacts like 'ChatGPT said:', 'As an AI...', or 'I can help with that'.",
     "promptInstruction": "Look for copy-paste artifacts at the START or END. Specifically: 'ChatGPT said:', 'Claude said:', 'Here is a draft:', 'Sure, here is...', 'As an AI language model', 'I cannot browse'. Also look for placeholders like '[Insert name here]','If you tell me [X] then I can give you a [Y].",
-    "weight": 4,
+    "weight": 3,
     "defaultTolerance": 0.1
   },
   {
