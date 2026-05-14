@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
-import { Sparkles, AlertTriangle, FileSearch, RefreshCw, ChevronRight, ScanLine, Edit, RotateCcw, X } from 'lucide-react';
-import { AnalysisRequestError, analyzeTextForSlop, calculateCalculatedSlopScore, getWritingStyle } from './services/geminiService';
+import { Sparkles, AlertTriangle, FileSearch, RefreshCw, ChevronRight, ScanLine, Edit, RotateCcw, X, Share2, Check } from 'lucide-react';
+import { AnalysisRequestError, analyzeTextForSlop, calculateCalculatedSlopScore, fetchCompletedAnalysisJob, getWritingStyle } from './services/geminiService';
 import { SlopAnalysis, AnalysisStatus, PatternDefinition } from './types';
 import SlopChart from './components/SlopChart';
 import PatternCard from './components/PatternCard';
@@ -45,6 +45,8 @@ function App() {
   const [truncationNotice, setTruncationNotice] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [loadingMessage, setLoadingMessage] = useState("");
+  const [shareJobId, setShareJobId] = useState<string | null>(null);
+  const [isShareCopied, setIsShareCopied] = useState(false);
   
   // UI State
   const [isConfigPanelOpen, setIsConfigPanelOpen] = useState(false);
@@ -54,6 +56,11 @@ function App() {
   const [activePatterns, setActivePatterns] = useState<PatternDefinition[]>(DETECTION_PATTERNS);
   const canAnalyze = inputText.trim().length > 0;
   const inputLimitReached = inputText.length >= ANALYSIS_MAX_INPUT_CHARS;
+
+  const clearSharedUrl = () => {
+    if (!window.location.search.includes('analysis=')) return;
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.hash}`);
+  };
 
   // Simulated progress bar effect
   useEffect(() => {
@@ -89,6 +96,53 @@ function App() {
     return () => clearInterval(messageInterval);
   }, [status, activePatterns]);
 
+  useEffect(() => {
+    const sharedJobId = new URLSearchParams(window.location.search).get('analysis');
+    if (!sharedJobId) return;
+
+    let cancelled = false;
+
+    const loadSharedAnalysis = async () => {
+      setStatus(AnalysisStatus.ANALYZING);
+      setError(null);
+      setErrorRetryable(false);
+      setProgress(35);
+      setLoadingMessage("Loading shared analysis...");
+
+      try {
+        const shared = await fetchCompletedAnalysisJob(sharedJobId);
+        if (cancelled) return;
+
+        if (shared.patterns?.length) {
+          setActivePatterns(shared.patterns);
+        }
+
+        setInputText(shared.inputText || '');
+        setResult(shared.analysis);
+        setShareJobId(shared.jobId || sharedJobId);
+        setProgress(100);
+        setStatus(AnalysisStatus.COMPLETE);
+      } catch (err) {
+        if (cancelled) return;
+
+        logClientError(err, {
+          source: "loadSharedAnalysis",
+          metadata: {
+            jobId: sharedJobId,
+          },
+        });
+        setError(err instanceof Error ? err.message : "Shared analysis could not be loaded.");
+        setStatus(AnalysisStatus.ERROR);
+      }
+    };
+
+    void loadSharedAnalysis();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleAnalyze = async () => {
     if (!inputText.trim()) return;
     
@@ -99,10 +153,14 @@ function App() {
     setError(null);
     setErrorRetryable(true);
     setResult(null);
+    setShareJobId(null);
+    setIsShareCopied(false);
+    clearSharedUrl();
 
     try {
       const data = await analyzeTextForSlop(inputText, activePatterns);
-      setResult(data);
+      setResult(data.analysis);
+      setShareJobId(data.jobId || null);
       setProgress(100);
       setTimeout(() => setStatus(AnalysisStatus.COMPLETE), 500); // Slight delay to show 100%
     } catch (err) {
@@ -128,6 +186,9 @@ function App() {
     setErrorRetryable(true);
     setTruncationNotice(null);
     setStatus(AnalysisStatus.IDLE);
+    setShareJobId(null);
+    setIsShareCopied(false);
+    clearSharedUrl();
   };
 
   const handleEdit = () => {
@@ -137,6 +198,24 @@ function App() {
     setError(null);
     setErrorRetryable(true);
     setStatus(AnalysisStatus.IDLE);
+    clearSharedUrl();
+  };
+
+  const handleShareAnalysis = async () => {
+    if (!shareJobId) return;
+
+    const sharePath = `${window.location.pathname}?analysis=${encodeURIComponent(shareJobId)}`;
+    const shareUrl = `${window.location.origin}${sharePath}`;
+    window.history.replaceState(null, '', sharePath);
+
+    try {
+      await navigator.clipboard?.writeText(shareUrl);
+    } catch {
+      // The URL is still placed in the address bar if clipboard access is unavailable.
+    }
+
+    setIsShareCopied(true);
+    window.setTimeout(() => setIsShareCopied(false), 2000);
   };
 
   const handleDismissEvidence = (patternId: string, evidenceIndex: number) => {
@@ -264,6 +343,16 @@ function App() {
                   
                   {status === AnalysisStatus.COMPLETE ? (
                     <div className="flex gap-2">
+                      {shareJobId && (
+                        <button
+                          onClick={handleShareAnalysis}
+                          className="text-xs flex items-center gap-1 bg-white border border-gray-200 text-gray-600 px-2 py-1 rounded hover:border-teal-500 hover:text-teal-600 transition-colors"
+                          title="Copy shareable analysis link"
+                        >
+                          {isShareCopied ? <Check className="w-3 h-3" /> : <Share2 className="w-3 h-3" />}
+                          {isShareCopied ? 'Copied' : 'Share'}
+                        </button>
+                      )}
                       <button 
                         onClick={handleEdit}
                         className="text-xs flex items-center gap-1 bg-white border border-gray-200 text-gray-600 px-2 py-1 rounded hover:border-teal-500 hover:text-teal-600 transition-colors"

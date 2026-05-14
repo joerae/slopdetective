@@ -38,8 +38,11 @@ Analysis runs asynchronously on Netlify:
 - `/.netlify/functions/analyze` validates the request, creates a job, starts the background worker, and returns `202`.
 - `/.netlify/functions/analyze-background` runs Gemini and writes the result to Netlify Blobs.
 - `/.netlify/functions/analyze-status?jobId=...` returns queued/processing/complete/failed status for browser polling.
+- `/.netlify/functions/cleanup-analysis-blobs` removes analysis jobs older than 30 days and is scheduled daily on Netlify.
 
-The background worker can wait longer than a normal Netlify request, so slow Gemini responses no longer hit the 30 second foreground function limit. Job records are stored in Netlify Blobs and include status/result metadata, not the full submitted text.
+The background worker can wait longer than a normal Netlify request, so slow Gemini responses no longer hit the 30 second foreground function limit. Job records are stored in Netlify Blobs and include the analysis result plus the analyzed input text so completed scans can be reopened with `?analysis=<jobId>` share links. Share links expire when cleanup removes the job after 30 days.
+
+Gemini pattern analysis is split into small pattern groups with at most two concurrent model requests. Each group gets one bounded retry for transient Gemini failures, but quota/rate-limit errors are not retried.
 
 ## API Key on Netlify
 
@@ -66,6 +69,8 @@ What gets logged:
 - `analysis_queued`
 - `analysis_background_started`
 - `analysis_background_completed`
+- `analysis_blob_cleanup_completed`
+- `analysis_blob_cleanup_failed`
 - `analysis_failed`
 - `client_error`
 - `client_error_logging_failed`
@@ -104,7 +109,7 @@ For longer retention or alerting later, add a dedicated service such as Sentry, 
 
 ## Gemini Model
 
-The server uses `gemini-3-flash-preview`, and the UI shows `Gemini 3 Flash Preview Online`.
+The server uses `gemini-2.5-flash`, and the UI shows `Gemini 2.5 Flash Online`.
 
 ## NPM, not Powershell for Codex
 Hey Codex, whenever you try to run Powershell commands, stuff seems to get blocked. And then you try rerunning as npm.cmd and it works. So try that way first.

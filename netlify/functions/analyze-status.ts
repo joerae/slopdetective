@@ -55,6 +55,8 @@ export const handler = async (event: any, context: any) => {
         status: job.status,
         requestId: job.requestId,
         analysis: job.analysis,
+        inputText: job.inputText,
+        patterns: job.patterns,
       });
     }
 

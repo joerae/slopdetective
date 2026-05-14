@@ -6,6 +6,12 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.34",
+    date: "2026-05-15",
+    note: "Shareable analysis links, Gemini retries, and 30-day cleanup.",
+  },
+
+  {
     version: "1.33",
     date: "2026-05-14",
     note: "Compact evidence view with full instance counting.",

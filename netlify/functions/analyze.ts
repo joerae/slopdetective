@@ -2,8 +2,9 @@ import { classifyAnalysisError } from "../../server/analysisErrors";
 import { createRequestId, logError, logInfo, logWarn } from "../../server/logger";
 import { GEMINI_MODEL } from "../../shared/geminiModel";
 import { ANALYSIS_JOB_POLL_INTERVAL_MS, type AnalysisJobRecord } from "../../shared/analysisJobs";
-import { getAnalysisJobStore, writeAnalysisJob } from "../../server/analysisJobStore";
+import { cleanupOldAnalysisJobsIfDue, getAnalysisJobStore, writeAnalysisJob } from "../../server/analysisJobStore";
 import { ANALYSIS_JOB_TOKEN_HEADER, createAnalysisJobToken } from "../../server/analysisJobAuth";
+import { truncateAnalysisInput } from "../../shared/analysisLimits";
 
 const jsonResponse = (statusCode: number, body: Record<string, unknown>) => ({
   statusCode,
@@ -86,7 +87,27 @@ export const handler = async (event: any, context: any) => {
       });
     }
 
+    const store = getAnalysisJobStore(event);
+
+    try {
+      const cleanup = await cleanupOldAnalysisJobsIfDue(store);
+      if (!cleanup.skipped) {
+        logInfo("analysis_blob_cleanup_completed", {
+          requestId,
+          checked: cleanup.checked,
+          deleted: cleanup.deleted,
+          cutoff: cleanup.cutoff,
+        });
+      }
+    } catch (cleanupError) {
+      logWarn("analysis_blob_cleanup_failed", {
+        requestId,
+        error: cleanupError,
+      });
+    }
+
     const now = new Date().toISOString();
+    const analysisText = truncateAnalysisInput(text).text;
     const job: AnalysisJobRecord = {
       id: jobId,
       status: "queued",
@@ -96,9 +117,10 @@ export const handler = async (event: any, context: any) => {
       textLength: text.length,
       patternCount: patterns.length,
       model: GEMINI_MODEL,
+      inputText: analysisText,
+      patterns,
     };
 
-    const store = getAnalysisJobStore(event);
     await writeAnalysisJob(store, job);
 
     const backgroundUrl = `${getFunctionOrigin(event)}/.netlify/functions/analyze-background`;

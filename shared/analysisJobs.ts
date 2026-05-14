@@ -1,4 +1,4 @@
-import type { SlopAnalysis } from "../types";
+import type { SlopAnalysis, PatternDefinition } from "../types";
 
 export type AnalysisJobStatus = "queued" | "processing" | "complete" | "failed";
 
@@ -11,6 +11,8 @@ export interface AnalysisJobRecord {
   textLength: number;
   patternCount: number;
   model: string;
+  inputText?: string;
+  patterns?: PatternDefinition[];
   analysis?: SlopAnalysis;
   error?: string;
   code?: string;
@@ -31,10 +33,14 @@ export interface AnalysisJobStatusResponse {
   retryAfterMs?: number;
   requestId?: string;
   analysis?: SlopAnalysis;
+  inputText?: string;
+  patterns?: PatternDefinition[];
   error?: string;
   code?: string;
   retryable?: boolean;
 }
+
+export const ANALYSIS_JOB_RETENTION_DAYS = 30;
 
 export const ANALYSIS_JOB_POLL_INTERVAL_MS = 2000;
 export const ANALYSIS_JOB_CLIENT_TIMEOUT_MS = 180000;

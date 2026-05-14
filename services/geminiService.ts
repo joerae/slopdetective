@@ -16,6 +16,16 @@ interface AnalyzeResponse {
   status?: string;
   statusUrl?: string;
   retryAfterMs?: number;
+  inputText?: string;
+  patterns?: PatternDefinition[];
+}
+
+export interface AnalyzeTextResult {
+  analysis: SlopAnalysis;
+  jobId?: string;
+  requestId?: string;
+  inputText?: string;
+  patterns?: PatternDefinition[];
 }
 
 export class AnalysisRequestError extends Error {
@@ -106,7 +116,7 @@ const sleep = (durationMs: number) => new Promise(resolve => setTimeout(resolve,
 const pollAnalysisJob = async (
   job: AnalysisJobSubmitResponse,
   startedAt: number,
-): Promise<SlopAnalysis> => {
+): Promise<AnalyzeTextResult> => {
   const endpoint = job.statusUrl;
 
   while (performance.now() - startedAt < ANALYSIS_JOB_CLIENT_TIMEOUT_MS) {
@@ -150,7 +160,13 @@ const pollAnalysisJob = async (
     }
 
     if (payload.status === "complete" && payload.analysis) {
-      return payload.analysis;
+      return {
+        analysis: payload.analysis,
+        jobId: payload.jobId || job.jobId,
+        requestId: payload.requestId || job.requestId,
+        inputText: payload.inputText,
+        patterns: payload.patterns,
+      };
     }
 
     if (payload.status === "failed") {
@@ -177,7 +193,75 @@ const pollAnalysisJob = async (
   });
 };
 
-export const analyzeTextForSlop = async (text: string, patterns: PatternDefinition[]): Promise<SlopAnalysis> => {
+export const fetchCompletedAnalysisJob = async (jobId: string): Promise<AnalyzeTextResult> => {
+  const endpoint = `/.netlify/functions/analyze-status?jobId=${encodeURIComponent(jobId)}`;
+  const startedAt = performance.now();
+
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "GET",
+      headers: {
+        "Accept": "application/json",
+      },
+    });
+  } catch (error) {
+    const durationMs = Math.round(performance.now() - startedAt);
+    const message = error instanceof Error ? error.message : "Network request failed.";
+
+    throw new AnalysisRequestError(`Shared analysis could not be reached: ${message}`, {
+      endpoint,
+      durationMs,
+      responseParseError: error instanceof Error ? error.name : undefined,
+    });
+  }
+
+  const durationMs = Math.round(performance.now() - startedAt);
+  const { payload, responseText, responseParseError } = await parseJsonResponse<AnalysisJobStatusResponse>(response);
+
+  if (!response.ok) {
+    throw new AnalysisRequestError(payload.error || "Shared analysis could not be loaded.", {
+      requestId: payload.requestId,
+      status: response.status,
+      statusText: response.statusText,
+      code: payload.code,
+      retryable: payload.retryable,
+      endpoint,
+      durationMs,
+      responseParseError,
+      responseBodySnippet: responseText.slice(0, 500),
+    });
+  }
+
+  if (payload.status !== "complete" || !payload.analysis) {
+    throw new AnalysisRequestError(
+      payload.status === "failed"
+        ? payload.error || "Shared analysis failed before it completed."
+        : "Shared analysis is not ready yet.",
+      {
+        requestId: payload.requestId,
+        status: response.status,
+        statusText: response.statusText,
+        code: payload.code || "analysis_job_not_ready",
+        retryable: payload.retryable,
+        endpoint,
+        durationMs,
+        responseParseError,
+        responseBodySnippet: responseText.slice(0, 500),
+      },
+    );
+  }
+
+  return {
+    analysis: payload.analysis,
+    jobId: payload.jobId || jobId,
+    requestId: payload.requestId,
+    inputText: payload.inputText,
+    patterns: payload.patterns,
+  };
+};
+
+export const analyzeTextForSlop = async (text: string, patterns: PatternDefinition[]): Promise<AnalyzeTextResult> => {
   const endpoint = "/.netlify/functions/analyze";
   const startedAt = performance.now();
 
@@ -226,5 +310,11 @@ export const analyzeTextForSlop = async (text: string, patterns: PatternDefiniti
     });
   }
 
-  return payload.analysis;
+  return {
+    analysis: payload.analysis,
+    jobId: payload.jobId,
+    requestId: payload.requestId,
+    inputText: payload.inputText,
+    patterns: payload.patterns,
+  };
 };

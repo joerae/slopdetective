@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import type { SlopAnalysis, PatternDefinition, PatternMatch } from "../types";
-import { PublicAnalysisError } from "./analysisErrors";
+import { classifyAnalysisError, PublicAnalysisError } from "./analysisErrors";
 import { GEMINI_MODEL } from "../shared/geminiModel";
 import { ANALYSIS_GEMINI_MAX_OUTPUT_TOKENS, ANALYSIS_GEMINI_TIMEOUT_MS, truncateAnalysisInput } from "../shared/analysisLimits";
 
@@ -13,6 +13,7 @@ interface AnalyzeInput {
 
 const ANALYSIS_PATTERN_CHUNK_SIZE = 4;
 const ANALYSIS_MAX_PARALLEL_REQUESTS = 2;
+const ANALYSIS_GEMINI_MAX_ATTEMPTS = 2;
 
 // Dynamically build the schema based on our strict typescript types.
 const ANALYSIS_SCHEMA: Schema = {
@@ -147,6 +148,8 @@ const createTimeoutController = (timeoutMs: number) => {
   };
 };
 
+const sleep = (durationMs: number) => new Promise(resolve => setTimeout(resolve, durationMs));
+
 const getFinishReason = (response: Awaited<ReturnType<GoogleGenAI["models"]["generateContent"]>>): string | undefined => {
   return response.candidates?.[0]?.finishReason;
 };
@@ -267,6 +270,45 @@ const requestGeminiAnalysis = async (
   return parseAnalysisResponse(response);
 };
 
+const shouldRetryGeminiAnalysis = (error: unknown) => {
+  const failure = classifyAnalysisError(error);
+
+  return (
+    failure.retryable &&
+    failure.errorCode !== "gemini_quota" &&
+    (failure.errorCode === "gemini_timeout" ||
+      failure.errorCode === "gemini_unavailable" ||
+      failure.errorCode === "gemini_bad_response" ||
+      failure.errorCode === "analysis_failed")
+  );
+};
+
+const requestGeminiAnalysisWithRetry = async (
+  ai: GoogleGenAI,
+  analysisText: string,
+  patterns: PatternDefinition[],
+  timeoutMs: number,
+): Promise<SlopAnalysis> => {
+  const attemptTimeoutMs = Math.max(15_000, Math.floor(timeoutMs / ANALYSIS_GEMINI_MAX_ATTEMPTS));
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= ANALYSIS_GEMINI_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await requestGeminiAnalysis(ai, analysisText, patterns, attemptTimeoutMs);
+    } catch (error) {
+      lastError = error;
+
+      if (attempt >= ANALYSIS_GEMINI_MAX_ATTEMPTS || !shouldRetryGeminiAnalysis(error)) {
+        throw error;
+      }
+
+      await sleep(750 * attempt);
+    }
+  }
+
+  throw lastError;
+};
+
 const chunkPatterns = (patterns: PatternDefinition[]) => {
   const chunks: PatternDefinition[][] = [];
 
@@ -347,7 +389,7 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey, timeout
   for (let i = 0; i < patternChunks.length; i += ANALYSIS_MAX_PARALLEL_REQUESTS) {
     const batch = patternChunks.slice(i, i + ANALYSIS_MAX_PARALLEL_REQUESTS);
     const batchAnalyses = await Promise.all(
-      batch.map(chunk => requestGeminiAnalysis(ai, analysisText, chunk, timeoutMs)),
+      batch.map(chunk => requestGeminiAnalysisWithRetry(ai, analysisText, chunk, timeoutMs)),
     );
 
     analyses.push(...batchAnalyses);

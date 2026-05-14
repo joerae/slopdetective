@@ -4,8 +4,9 @@ import { analyzeTextForSlopServer } from "./slopAnalyzer";
 import { classifyAnalysisError } from "./analysisErrors";
 import { createRequestId, logError, logInfo, logWarn } from "./logger";
 import { GEMINI_MODEL } from "../shared/geminiModel";
-import { ANALYSIS_BACKGROUND_GEMINI_TIMEOUT_MS } from "../shared/analysisLimits";
+import { ANALYSIS_BACKGROUND_GEMINI_TIMEOUT_MS, truncateAnalysisInput } from "../shared/analysisLimits";
 import {
+  ANALYSIS_JOB_RETENTION_DAYS,
   ANALYSIS_JOB_POLL_INTERVAL_MS,
   type AnalysisJobRecord,
 } from "../shared/analysisJobs";
@@ -49,6 +50,26 @@ const sendJson = (response: ServerResponse, statusCode: number, payload: Record<
 };
 
 const localAnalysisJobs = new Map<string, AnalysisJobRecord>();
+
+const cleanupLocalAnalysisJobs = () => {
+  const cutoffMs = Date.now() - ANALYSIS_JOB_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+  let deleted = 0;
+
+  localAnalysisJobs.forEach((job, jobId) => {
+    const timestamp = Date.parse(job.createdAt || job.updatedAt);
+
+    if (Number.isFinite(timestamp) && timestamp < cutoffMs) {
+      localAnalysisJobs.delete(jobId);
+      deleted += 1;
+    }
+  });
+
+  return {
+    checked: localAnalysisJobs.size + deleted,
+    deleted,
+    cutoff: new Date(cutoffMs).toISOString(),
+  };
+};
 
 const updateLocalAnalysisJob = (jobId: string, update: Partial<AnalysisJobRecord>) => {
   const existing = localAnalysisJobs.get(jobId);
@@ -205,7 +226,19 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
             return;
           }
 
+          const cleanup = cleanupLocalAnalysisJobs();
+          if (cleanup.deleted > 0) {
+            logInfo("analysis_blob_cleanup_completed", {
+              requestId,
+              checked: cleanup.checked,
+              deleted: cleanup.deleted,
+              cutoff: cleanup.cutoff,
+              runtime: "vite-dev",
+            });
+          }
+
           const now = new Date().toISOString();
+          const analysisText = truncateAnalysisInput(text).text;
           localAnalysisJobs.set(jobId, {
             id: jobId,
             status: "queued",
@@ -215,6 +248,8 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
             textLength: text.length,
             patternCount: patterns.length,
             model: GEMINI_MODEL,
+            inputText: analysisText,
+            patterns,
           });
 
           void runLocalAnalysisJob({
@@ -302,6 +337,8 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
             status: job.status,
             requestId: job.requestId,
             analysis: job.analysis,
+            inputText: job.inputText,
+            patterns: job.patterns,
           });
           return;
         }
@@ -323,6 +360,32 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
           status: job.status,
           requestId: job.requestId,
           retryAfterMs: ANALYSIS_JOB_POLL_INTERVAL_MS,
+        });
+        return;
+      }
+
+      if (pathname === "/.netlify/functions/cleanup-analysis-blobs") {
+        const requestId = createRequestId();
+
+        if (request.method !== "GET" && request.method !== "POST") {
+          sendJson(response, 405, { error: "Method not allowed.", requestId });
+          return;
+        }
+
+        const cleanup = cleanupLocalAnalysisJobs();
+        logInfo("analysis_blob_cleanup_completed", {
+          requestId,
+          checked: cleanup.checked,
+          deleted: cleanup.deleted,
+          cutoff: cleanup.cutoff,
+          runtime: "vite-dev",
+        });
+
+        sendJson(response, 200, {
+          ok: true,
+          ...cleanup,
+          skipped: false,
+          requestId,
         });
         return;
       }
