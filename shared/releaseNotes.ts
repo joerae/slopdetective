@@ -6,6 +6,18 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.36",
+    date: "2026-06-02",
+    note: "Moved result sharing below the score and refined sharing copy.",
+  },
+
+  {
+    version: "1.35",
+    date: "2026-06-02",
+    note: "Clearer analysis wait messaging, post-analysis sharing, feedback, and portfolio links.",
+  },
+
+  {
     version: "1.34",
     date: "2026-05-15",
     note: "Shareable analysis links, Gemini retries, and 30-day cleanup.",

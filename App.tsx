@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Sparkles, AlertTriangle, FileSearch, RefreshCw, ChevronRight, ScanLine, Edit, RotateCcw, X, Share2, Check } from 'lucide-react';
+import { Sparkles, AlertTriangle, FileSearch, RefreshCw, ChevronRight, ScanLine, Edit, RotateCcw, X, Share2, Check, MessageSquare, ExternalLink } from 'lucide-react';
 import { AnalysisRequestError, analyzeTextForSlop, calculateCalculatedSlopScore, fetchCompletedAnalysisJob, getWritingStyle } from './services/geminiService';
 import { SlopAnalysis, AnalysisStatus, PatternDefinition } from './types';
 import SlopChart from './components/SlopChart';
@@ -15,6 +15,8 @@ import { CURRENT_RELEASE, RELEASE_NOTES } from './shared/releaseNotes';
 
 const numberFormatter = new Intl.NumberFormat('en-US');
 const formatCount = (value: number) => numberFormatter.format(value);
+const FEEDBACK_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSf1pWxAPDtTxWB2U1ZWVA0XDZWWVpq7y1Mtw2WHrH_I8dMTXg/viewform?usp=publish-editor';
+const PORTFOLIO_URL = 'https://www.joeraeburn.com';
 
 const calculatePatternScore = (instanceCount: number, wordCount: number, tolerance: number) => {
   if (instanceCount <= 0 || wordCount <= 0 || tolerance <= 0) return 0;
@@ -466,6 +468,9 @@ function App() {
                       <ScanLine className="w-8 h-8 text-teal-600 relative z-10" />
                    </div>
                    <h3 className="text-xl font-bold text-gray-900 mb-2">Analyzing Patterns...</h3>
+                   <p className="text-gray-700 text-sm font-semibold mb-2">
+                     This usually takes about a minute.
+                   </p>
                    <p className="text-gray-500 text-sm mb-6 min-h-[40px] transition-all duration-300 flex items-center justify-center text-center px-4">
                      {loadingMessage}
                    </p>
@@ -533,6 +538,37 @@ function App() {
                    </div>
                 </div>
 
+                {/* Result Actions */}
+                <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-lg shadow-gray-100/50">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                      <h3 className="text-base font-bold text-gray-900">Share this analysis</h3>
+                      <p className="text-sm text-gray-500 mt-1">Share this result, or send feedback on how the result landed.</p>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-3">
+                      {shareJobId && (
+                        <button
+                          type="button"
+                          onClick={handleShareAnalysis}
+                          className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-teal-600 text-white text-sm font-bold hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500/30 transition-colors"
+                        >
+                          {isShareCopied ? <Check className="w-4 h-4" /> : <Share2 className="w-4 h-4" />}
+                          {isShareCopied ? 'Analysis link copied' : 'Share analysis'}
+                        </button>
+                      )}
+                      <a
+                        href={FEEDBACK_URL}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-white border border-gray-200 text-gray-700 text-sm font-bold hover:border-teal-500 hover:text-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500/30 transition-colors"
+                      >
+                        <MessageSquare className="w-4 h-4" />
+                        Give feedback
+                      </a>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Detailed Analysis Section */}
                 <div className="grid grid-cols-1 gap-6">
 
@@ -565,7 +601,17 @@ function App() {
       {/* Footer */}
       <footer className="mt-12 border-t border-gray-200 pt-8 text-center text-gray-400 text-sm relative">
         <div className="flex flex-col items-center gap-2">
-          <p>&copy; 2026 Joe Raeburn</p>
+          <p>
+            &copy; 2026{' '}
+            <a
+              href={PORTFOLIO_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="text-gray-500 underline decoration-dotted underline-offset-4 hover:text-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500/30 rounded"
+            >
+              Joe Raeburn
+            </a>
+          </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2">
             <button
               type="button"
@@ -577,6 +623,16 @@ function App() {
             </button>
             <span className="hidden sm:inline text-gray-300">|</span>
             <span>{CURRENT_RELEASE.note}</span>
+            <span className="hidden sm:inline text-gray-300">|</span>
+            <a
+              href={FEEDBACK_URL}
+              target="_blank"
+              rel="noreferrer"
+              className="font-mono text-gray-500 underline decoration-dotted underline-offset-4 hover:text-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500/30 rounded"
+            >
+              Feedback
+              <ExternalLink className="ml-1 inline h-3 w-3" />
+            </a>
           </div>
         </div>
       </footer>
