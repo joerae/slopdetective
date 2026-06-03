@@ -6,6 +6,18 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.40",
+    date: "2026-06-04",
+    note: "Made the score glow follow hovered pattern segments.",
+  },
+
+  {
+    version: "1.39",
+    date: "2026-06-04",
+    note: "Made the score scan animation run once to reduce distraction.",
+  },
+
+  {
     version: "1.38",
     date: "2026-06-04",
     note: "Made score contributors visible and refreshed the link preview image.",

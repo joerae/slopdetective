@@ -1,5 +1,5 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { SlopAnalysis, PatternDefinition } from '../types';
 
@@ -21,6 +21,7 @@ const COLORS = [
 
 const SlopChart: React.FC<SlopChartProps> = ({ analysis, patterns }) => {
   const score = analysis.slopScore;
+  const [hoveredSegmentIndex, setHoveredSegmentIndex] = useState<number | null>(null);
 
   // Transform data for the chart
   // We want to show the specific contribution of each pattern to the total score
@@ -76,6 +77,43 @@ const SlopChart: React.FC<SlopChartProps> = ({ analysis, patterns }) => {
   if (score >= 30) scoreColor = '#ca8a04';
   if (score >= 60) scoreColor = '#dc2626';
 
+  const getSegmentGlow = (index: number | null) => {
+    if (index === null || !chartData[index]) {
+      return {
+        x: 50,
+        y: 50,
+        color: scoreColor,
+        opacity: contributors.length > 0 ? 0.5 : 0.24,
+      };
+    }
+
+    const segment = chartData[index];
+    if (segment.name === "Remaining" || segment.name === "Clean Writing") {
+      return {
+        x: 50,
+        y: 50,
+        color: scoreColor,
+        opacity: 0.28,
+      };
+    }
+
+    const totalValue = chartData.reduce((acc, item) => acc + item.value, 0);
+    const previousValue = chartData
+      .slice(0, index)
+      .reduce((acc, item) => acc + item.value, 0);
+    const midpoint = totalValue > 0 ? (previousValue + segment.value / 2) / totalValue : 0;
+    const angle = (90 - midpoint * 360) * (Math.PI / 180);
+
+    return {
+      x: 50 + Math.cos(angle) * 28,
+      y: 50 - Math.sin(angle) * 28,
+      color: segment.color,
+      opacity: 0.72,
+    };
+  };
+
+  const glow = getSegmentGlow(hoveredSegmentIndex);
+
   const CustomTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
@@ -112,16 +150,24 @@ const SlopChart: React.FC<SlopChartProps> = ({ analysis, patterns }) => {
           <div className="slop-chart-scan absolute left-0 right-0 h-12 bg-cyan-300/10"></div>
         </div>
 
-        <div className="relative z-10 mb-5 flex flex-col gap-2 text-center md:text-left">
-          <span className="text-xs font-bold uppercase text-teal-700">Pattern contribution</span>
-          <h3 className="text-xl font-bold text-gray-900">AI Slop Score</h3>
+        <div className="relative z-10 mb-5 grid grid-cols-1 md:grid-cols-[minmax(280px,0.95fr)_minmax(260px,1.05fr)] gap-6">
+          <div className="flex flex-col gap-2 text-center">
+            <span className="text-xs font-bold uppercase text-teal-700">Pattern contribution</span>
+            <h3 className="text-xl font-bold text-gray-900">AI Slop Score</h3>
+          </div>
+          <div className="hidden md:block" aria-hidden="true"></div>
         </div>
 
         <div className="relative z-10 grid grid-cols-1 md:grid-cols-[minmax(280px,0.95fr)_minmax(260px,1.05fr)] gap-6 items-center">
-          <div className="h-[320px] w-full relative">
+          <div className="h-[320px] w-full relative" onMouseLeave={() => setHoveredSegmentIndex(null)}>
             <div
-              className="slop-chart-orbit absolute left-1/2 top-1/2 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-70"
-              style={{ background: `conic-gradient(from 120deg, transparent 0deg, ${scoreColor} 70deg, transparent 150deg, rgba(20, 184, 166, 0.25) 230deg, transparent 360deg)` }}
+              className="absolute h-36 w-36 -translate-x-1/2 -translate-y-1/2 rounded-full blur-2xl transition-all duration-300 ease-out"
+              style={{
+                left: `${glow.x}%`,
+                top: `${glow.y}%`,
+                backgroundColor: glow.color,
+                opacity: glow.opacity,
+              }}
             ></div>
             <div className="absolute left-1/2 top-1/2 h-44 w-44 -translate-x-1/2 -translate-y-1/2 rounded-full border border-gray-100 bg-white/80 shadow-inner"></div>
             
@@ -151,6 +197,8 @@ const SlopChart: React.FC<SlopChartProps> = ({ analysis, patterns }) => {
                         animationBegin={160}
                         animationDuration={1200}
                         animationEasing="ease-out"
+                        onMouseEnter={(_, index) => setHoveredSegmentIndex(index)}
+                        onMouseLeave={() => setHoveredSegmentIndex(null)}
                     >
                         {chartData.map((entry, index) => (
                             <Cell
