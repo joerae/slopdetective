@@ -65,6 +65,13 @@ const SlopChart: React.FC<SlopChartProps> = ({ analysis, patterns }) => {
      }];
   }
 
+  const contributors = chartData
+    .filter(item => item.name !== "Remaining" && item.name !== "Clean Writing")
+    .sort((a, b) => b.value - a.value);
+
+  const totalContributorValue = contributors.reduce((acc, item) => acc + item.value, 0);
+  const topContributors = contributors.slice(0, 5);
+
   let scoreColor = '#0d9488'; // teal-600 for low/good scores
   if (score >= 30) scoreColor = '#ca8a04';
   if (score >= 60) scoreColor = '#dc2626';
@@ -99,15 +106,31 @@ const SlopChart: React.FC<SlopChartProps> = ({ analysis, patterns }) => {
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-sm relative overflow-hidden">
-        <h3 className="text-lg font-bold text-gray-700 mb-4 text-center">AI Slop Score</h3>
-        <div className="h-[300px] w-full relative">
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="absolute -top-24 left-10 h-48 w-48 rounded-full bg-teal-100/60 blur-3xl"></div>
+          <div className="absolute bottom-0 right-0 h-56 w-56 rounded-full bg-red-100/40 blur-3xl"></div>
+          <div className="slop-chart-scan absolute left-0 right-0 h-12 bg-cyan-300/10"></div>
+        </div>
+
+        <div className="relative z-10 mb-5 flex flex-col gap-2 text-center md:text-left">
+          <span className="text-xs font-bold uppercase text-teal-700">Pattern contribution</span>
+          <h3 className="text-xl font-bold text-gray-900">AI Slop Score</h3>
+        </div>
+
+        <div className="relative z-10 grid grid-cols-1 md:grid-cols-[minmax(280px,0.95fr)_minmax(260px,1.05fr)] gap-6 items-center">
+          <div className="h-[320px] w-full relative">
+            <div
+              className="slop-chart-orbit absolute left-1/2 top-1/2 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full opacity-70"
+              style={{ background: `conic-gradient(from 120deg, transparent 0deg, ${scoreColor} 70deg, transparent 150deg, rgba(20, 184, 166, 0.25) 230deg, transparent 360deg)` }}
+            ></div>
+            <div className="absolute left-1/2 top-1/2 h-44 w-44 -translate-x-1/2 -translate-y-1/2 rounded-full border border-gray-100 bg-white/80 shadow-inner"></div>
             
             {/* Center Label - Rendered FIRST so the Chart (and its Tooltip) stack ON TOP of it */}
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                <span className="text-6xl font-extrabold tracking-tighter" style={{ color: scoreColor }}>
+                <span className="text-6xl font-extrabold" style={{ color: scoreColor }}>
                     {score}
                 </span>
-                <span className="text-xs text-gray-400 uppercase tracking-widest font-bold mt-1">Slop Score</span>
+                <span className="text-xs text-gray-400 uppercase font-bold mt-1">Slop Score</span>
             </div>
 
             <ResponsiveContainer width="100%" height="100%">
@@ -124,26 +147,82 @@ const SlopChart: React.FC<SlopChartProps> = ({ analysis, patterns }) => {
                         cornerRadius={4}
                         startAngle={90}
                         endAngle={-270}
+                        isAnimationActive={true}
+                        animationBegin={160}
+                        animationDuration={1200}
+                        animationEasing="ease-out"
                     >
                         {chartData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
+                            <Cell
+                              key={`cell-${index}`}
+                              fill={entry.color}
+                              className={entry.name === "Remaining" || entry.name === "Clean Writing" ? "" : "slop-chart-segment"}
+                            />
                         ))}
                     </Pie>
                     <Tooltip 
                       content={<CustomTooltip />} 
-                      isAnimationActive={false}
+                      isAnimationActive={true}
                       cursor={{ fill: 'transparent' }}
                       wrapperStyle={{ zIndex: 50 }}
                     />
                 </PieChart>
             </ResponsiveContainer>
-            
+
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white/85 p-4 shadow-sm">
+            <div className="mb-4 flex items-center justify-between gap-4">
+              <div>
+                <h4 className="text-sm font-bold text-gray-900">Score contributors</h4>
+                <p className="text-xs text-gray-500 mt-1">
+                  {score === 0 ? "No weighted pattern hits found." : "Ranked by weighted contribution."}
+                </p>
+              </div>
+              <div className="rounded-full border border-gray-200 bg-gray-50 px-3 py-1 text-xs font-bold text-gray-600">
+                {contributors.length} active
+              </div>
+            </div>
+
+            {topContributors.length > 0 ? (
+              <ol className="space-y-3">
+                {topContributors.map((item, index) => {
+                  const share = totalContributorValue > 0 ? Math.max(4, Math.round((item.value / totalContributorValue) * 100)) : 0;
+
+                  return (
+                    <li key={item.name} className="group">
+                      <div className="mb-1.5 flex items-center justify-between gap-3">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span
+                            className="h-3 w-3 shrink-0 rounded-full shadow-sm"
+                            style={{ backgroundColor: item.color }}
+                            aria-hidden="true"
+                          ></span>
+                          <span className="text-sm font-bold leading-snug text-gray-800" title={item.name}>
+                            {index + 1}. {item.name}
+                          </span>
+                        </div>
+                        <span className="shrink-0 font-mono text-xs font-bold text-gray-500">
+                          {item.score}/100
+                        </span>
+                      </div>
+                      <div className="h-2 overflow-hidden rounded-full bg-gray-100">
+                        <div
+                          className="slop-contributor-bar h-full rounded-full"
+                          style={{ width: `${share}%`, backgroundColor: item.color }}
+                        ></div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : (
+              <div className="rounded-lg border border-teal-100 bg-teal-50 px-4 py-5 text-sm font-semibold text-teal-800">
+                No signs of AI generation detected.
+              </div>
+            )}
+          </div>
         </div>
-        <p className="text-center text-sm text-gray-500 mt-2 max-w-md mx-auto">
-            {score === 0 
-                ? "No signs of AI generation detected." 
-                : "Mouse over the colored segments to see which patterns contributed to this score."}
-        </p>
     </div>
   );
 };

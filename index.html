@@ -61,6 +61,72 @@
       .animate-ping-slow {
         animation: ping-slow 3s cubic-bezier(0, 0, 0.2, 1) infinite;
       }
+
+      @keyframes slop-scan {
+        0% {
+          transform: translateY(-80px);
+          opacity: 0;
+        }
+        18% {
+          opacity: 1;
+        }
+        72% {
+          opacity: 0.8;
+        }
+        100% {
+          transform: translateY(520px);
+          opacity: 0;
+        }
+      }
+
+      @keyframes slop-orbit {
+        from {
+          transform: translate(-50%, -50%) rotate(0deg);
+        }
+        to {
+          transform: translate(-50%, -50%) rotate(360deg);
+        }
+      }
+
+      @keyframes slop-bar-fill {
+        from {
+          transform: scaleX(0);
+        }
+        to {
+          transform: scaleX(1);
+        }
+      }
+
+      .slop-chart-scan {
+        animation: slop-scan 4.8s ease-in-out infinite;
+      }
+
+      .slop-chart-orbit {
+        animation: slop-orbit 12s linear infinite;
+        filter: blur(14px);
+      }
+
+      .slop-chart-segment {
+        transition: filter 180ms ease, opacity 180ms ease;
+      }
+
+      .slop-chart-segment:hover {
+        filter: drop-shadow(0 0 10px rgba(15, 118, 110, 0.35));
+        opacity: 0.92;
+      }
+
+      .slop-contributor-bar {
+        animation: slop-bar-fill 900ms ease-out both;
+        transform-origin: left center;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .slop-chart-scan,
+        .slop-chart-orbit,
+        .slop-contributor-bar {
+          animation: none;
+        }
+      }
     </style>
   <script type="importmap">
 {
