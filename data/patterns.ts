@@ -38,7 +38,7 @@ export const DETECTION_PATTERNS: PatternDefinition[] = [
     "id": "vocab_slop",
     "name": "Vocabulary Slop",
     "description": "The 'Dead Giveaways': Tapestry, Delve, Realm, Unleash.",
-    "promptInstruction": "CRITICAL: Look for these specific words. Finding 'Tapestry' or 'Delve' is a major indicator. Others: 'Realm', 'Unleash', 'Harness', 'Testament to', 'Landscape', 'Intersection of', 'Symphony of', 'Resonate'.",
+    "promptInstruction": "CRITICAL: Look for these specific words. Finding 'Tapestry' or 'Delve' is a major indicator. Others: 'Realm', 'Unleash', 'Harness', 'Testament to', 'Landscape', 'Intersection of', 'Symphony of', 'Resonate','Revelation'.",
     "weight": 1.8,
     "defaultTolerance": 5
   },
