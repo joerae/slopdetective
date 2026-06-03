@@ -6,6 +6,12 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.37",
+    date: "2026-06-04",
+    note: "Added richer link previews for Slack and LinkedIn sharing.",
+  },
+
+  {
     version: "1.36",
     date: "2026-06-02",
     note: "Moved result sharing below the score and refined sharing copy.",
