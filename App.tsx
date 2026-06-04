@@ -9,7 +9,7 @@ import ConfigPanel from './components/ConfigPanel';
 import HighlightedText from './components/HighlightedText';
 import { DETECTION_PATTERNS } from './data/patterns';
 import { logClientError } from './services/errorLogger';
-import { GEMINI_MODEL_LABEL } from './shared/geminiModel';
+import { GEMINI_MODEL, getGeminiModelLabel, normalizeGeminiModelName } from './shared/geminiModel';
 import { ANALYSIS_MAX_INPUT_CHARS, ANALYSIS_MAX_INPUT_PAGES, truncateAnalysisInput } from './shared/analysisLimits';
 import { CURRENT_RELEASE, RELEASE_NOTES } from './shared/releaseNotes';
 
@@ -17,6 +17,15 @@ const numberFormatter = new Intl.NumberFormat('en-US');
 const formatCount = (value: number) => numberFormatter.format(value);
 const FEEDBACK_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSf1pWxAPDtTxWB2U1ZWVA0XDZWWVpq7y1Mtw2WHrH_I8dMTXg/viewform?usp=publish-editor';
 const PORTFOLIO_URL = 'https://www.joeraeburn.com';
+const GEMINI_MODEL_STORAGE_KEY = 'slopDetectiveGeminiModel';
+
+const readStoredGeminiModel = () => {
+  try {
+    return normalizeGeminiModelName(window.localStorage.getItem(GEMINI_MODEL_STORAGE_KEY) || GEMINI_MODEL);
+  } catch {
+    return GEMINI_MODEL;
+  }
+};
 
 const calculatePatternScore = (instanceCount: number, wordCount: number, tolerance: number) => {
   if (instanceCount <= 0 || wordCount <= 0 || tolerance <= 0) return 0;
@@ -49,6 +58,7 @@ function App() {
   const [loadingMessage, setLoadingMessage] = useState("");
   const [shareJobId, setShareJobId] = useState<string | null>(null);
   const [isShareCopied, setIsShareCopied] = useState(false);
+  const [selectedGeminiModel, setSelectedGeminiModel] = useState(readStoredGeminiModel);
   
   // UI State
   const [isConfigPanelOpen, setIsConfigPanelOpen] = useState(false);
@@ -58,6 +68,19 @@ function App() {
   const [activePatterns, setActivePatterns] = useState<PatternDefinition[]>(DETECTION_PATTERNS);
   const canAnalyze = inputText.trim().length > 0;
   const inputLimitReached = inputText.length >= ANALYSIS_MAX_INPUT_CHARS;
+  const selectedGeminiModelLabel = getGeminiModelLabel(selectedGeminiModel);
+
+  const handleGeminiModelChange = (model: string) => {
+    const normalizedModel = normalizeGeminiModelName(model);
+
+    setSelectedGeminiModel(normalizedModel);
+
+    try {
+      window.localStorage.setItem(GEMINI_MODEL_STORAGE_KEY, normalizedModel);
+    } catch {
+      // Local storage may be unavailable in private browsing or embedded previews.
+    }
+  };
 
   const clearSharedUrl = () => {
     if (!window.location.search.includes('analysis=')) return;
@@ -119,6 +142,10 @@ function App() {
           setActivePatterns(shared.patterns);
         }
 
+        if (shared.model) {
+          handleGeminiModelChange(shared.model);
+        }
+
         setInputText(shared.inputText || '');
         setResult(shared.analysis);
         setShareJobId(shared.jobId || sharedJobId);
@@ -160,9 +187,12 @@ function App() {
     clearSharedUrl();
 
     try {
-      const data = await analyzeTextForSlop(inputText, activePatterns);
+      const data = await analyzeTextForSlop(inputText, activePatterns, selectedGeminiModel);
       setResult(data.analysis);
       setShareJobId(data.jobId || null);
+      if (data.model) {
+        handleGeminiModelChange(data.model);
+      }
       setProgress(100);
       setTimeout(() => setStatus(AnalysisStatus.COMPLETE), 500); // Slight delay to show 100%
     } catch (err) {
@@ -173,6 +203,7 @@ function App() {
           patternCount: activePatterns.length,
           maxInputChars: ANALYSIS_MAX_INPUT_CHARS,
           inputLimitReached,
+          model: selectedGeminiModel,
         },
       });
       setError(err instanceof Error ? err.message : "Failed to analyze text. Please try again later.");
@@ -323,7 +354,7 @@ function App() {
               <div className="text-xs font-mono text-gray-400 uppercase tracking-widest mb-1">System Status</div>
               <div className="flex items-center gap-2 justify-end">
                 <span className="w-2 h-2 rounded-full bg-teal-500 animate-pulse"></span>
-                <span className="text-gray-600 text-sm font-medium">{GEMINI_MODEL_LABEL} Online</span>
+                <span className="text-gray-600 text-sm font-medium">{selectedGeminiModelLabel} Online</span>
               </div>
             </div>
           </div>
@@ -412,6 +443,8 @@ function App() {
                       <ConfigPanel 
                         patterns={activePatterns} 
                         onPatternsChange={setActivePatterns}
+                        geminiModel={selectedGeminiModel}
+                        onGeminiModelChange={handleGeminiModelChange}
                         isOpen={isConfigPanelOpen}
                         onToggle={() => setIsConfigPanelOpen(!isConfigPanelOpen)}
                       />

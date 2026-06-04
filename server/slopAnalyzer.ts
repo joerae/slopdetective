@@ -1,12 +1,13 @@
 import { GoogleGenAI, Type, Schema } from "@google/genai";
 import type { SlopAnalysis, PatternDefinition, PatternMatch } from "../types";
 import { classifyAnalysisError, PublicAnalysisError } from "./analysisErrors";
-import { GEMINI_MODEL } from "../shared/geminiModel";
+import { GEMINI_MODEL, normalizeGeminiModelName } from "../shared/geminiModel";
 import { ANALYSIS_GEMINI_MAX_OUTPUT_TOKENS, ANALYSIS_GEMINI_TIMEOUT_MS, truncateAnalysisInput } from "../shared/analysisLimits";
 
 interface AnalyzeInput {
   text: string;
   patterns: PatternDefinition[];
+  model?: string;
   apiKey?: string;
   timeoutMs?: number;
 }
@@ -241,6 +242,7 @@ const parseAnalysisResponse = (
 
 const requestGeminiAnalysis = async (
   ai: GoogleGenAI,
+  model: string,
   analysisText: string,
   patterns: PatternDefinition[],
   timeoutMs: number,
@@ -250,7 +252,7 @@ const requestGeminiAnalysis = async (
   let response;
   try {
     response = await ai.models.generateContent({
-      model: GEMINI_MODEL,
+      model,
       contents: buildAnalysisPrompt(analysisText, patterns),
       config: {
         responseMimeType: "application/json",
@@ -285,6 +287,7 @@ const shouldRetryGeminiAnalysis = (error: unknown) => {
 
 const requestGeminiAnalysisWithRetry = async (
   ai: GoogleGenAI,
+  model: string,
   analysisText: string,
   patterns: PatternDefinition[],
   timeoutMs: number,
@@ -294,7 +297,7 @@ const requestGeminiAnalysisWithRetry = async (
 
   for (let attempt = 1; attempt <= ANALYSIS_GEMINI_MAX_ATTEMPTS; attempt += 1) {
     try {
-      return await requestGeminiAnalysis(ai, analysisText, patterns, attemptTimeoutMs);
+      return await requestGeminiAnalysis(ai, model, analysisText, patterns, attemptTimeoutMs);
     } catch (error) {
       lastError = error;
 
@@ -352,7 +355,13 @@ const mergeAnalyses = (
   };
 };
 
-export const analyzeTextForSlopServer = async ({ text, patterns, apiKey, timeoutMs = ANALYSIS_GEMINI_TIMEOUT_MS }: AnalyzeInput): Promise<SlopAnalysis> => {
+export const analyzeTextForSlopServer = async ({
+  text,
+  patterns,
+  model = GEMINI_MODEL,
+  apiKey,
+  timeoutMs = ANALYSIS_GEMINI_TIMEOUT_MS,
+}: AnalyzeInput): Promise<SlopAnalysis> => {
   if (!apiKey) {
     throw new PublicAnalysisError("GEMINI_API_KEY is not configured.", {
       errorCode: "missing_api_key",
@@ -385,11 +394,12 @@ export const analyzeTextForSlopServer = async ({ text, patterns, apiKey, timeout
   const wordCount = countWords(analysisText);
   const patternChunks = chunkPatterns(patterns);
   const analyses: SlopAnalysis[] = [];
+  const geminiModel = normalizeGeminiModelName(model);
 
   for (let i = 0; i < patternChunks.length; i += ANALYSIS_MAX_PARALLEL_REQUESTS) {
     const batch = patternChunks.slice(i, i + ANALYSIS_MAX_PARALLEL_REQUESTS);
     const batchAnalyses = await Promise.all(
-      batch.map(chunk => requestGeminiAnalysisWithRetry(ai, analysisText, chunk, timeoutMs)),
+      batch.map(chunk => requestGeminiAnalysisWithRetry(ai, geminiModel, analysisText, chunk, timeoutMs)),
     );
 
     analyses.push(...batchAnalyses);

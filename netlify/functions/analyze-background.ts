@@ -3,7 +3,7 @@ import { classifyAnalysisError } from "../../server/analysisErrors";
 import { hasValidAnalysisJobToken } from "../../server/analysisJobAuth";
 import { getAnalysisJobStore, readAnalysisJob, writeAnalysisJob } from "../../server/analysisJobStore";
 import { createRequestId, logError, logInfo, logWarn } from "../../server/logger";
-import { GEMINI_MODEL } from "../../shared/geminiModel";
+import { normalizeGeminiModelName } from "../../shared/geminiModel";
 import { ANALYSIS_BACKGROUND_GEMINI_TIMEOUT_MS } from "../../shared/analysisLimits";
 import type { AnalysisJobRecord } from "../../shared/analysisJobs";
 
@@ -54,6 +54,7 @@ export const handler = async (event: any, context: any) => {
   const requestId = typeof body.requestId === "string" ? body.requestId : workerRequestId;
   const text = typeof body.text === "string" ? body.text : "";
   const patterns = Array.isArray(body.patterns) ? body.patterns : [];
+  const model = normalizeGeminiModelName(body.model);
 
   try {
     if (!jobId) {
@@ -70,13 +71,14 @@ export const handler = async (event: any, context: any) => {
       jobId,
       textLength: text.length,
       patternCount: patterns.length,
-      model: GEMINI_MODEL,
+      model,
       timeoutMs: ANALYSIS_BACKGROUND_GEMINI_TIMEOUT_MS,
     });
 
     const analysis = await analyzeTextForSlopServer({
       text,
       patterns,
+      model,
       apiKey: process.env.GEMINI_API_KEY,
       timeoutMs: ANALYSIS_BACKGROUND_GEMINI_TIMEOUT_MS,
     });
@@ -121,7 +123,7 @@ export const handler = async (event: any, context: any) => {
       workerRequestId,
       jobId,
       durationMs: Date.now() - startedAt,
-      model: GEMINI_MODEL,
+      model,
       errorCode: failure.errorCode,
       statusCode: failure.statusCode,
       retryable: failure.retryable,

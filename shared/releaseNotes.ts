@@ -6,6 +6,12 @@ export interface ReleaseNote {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: "1.41",
+    date: "2026-06-05",
+    note: "Added Gemini model switching and available model lookup.",
+  },
+
+  {
     version: "1.40",
     date: "2026-06-04",
     note: "Made the score glow follow hovered pattern segments.",

@@ -1,10 +1,11 @@
-import type { SlopAnalysis, PatternDefinition, PatternMatch } from "../types";
+import type { GeminiModelInfo, SlopAnalysis, PatternDefinition, PatternMatch } from "../types";
 import {
   ANALYSIS_JOB_CLIENT_TIMEOUT_MS,
   ANALYSIS_JOB_POLL_INTERVAL_MS,
   type AnalysisJobStatusResponse,
   type AnalysisJobSubmitResponse,
 } from "../shared/analysisJobs";
+import { normalizeGeminiModelName } from "../shared/geminiModel";
 
 interface AnalyzeResponse {
   analysis?: SlopAnalysis;
@@ -18,6 +19,13 @@ interface AnalyzeResponse {
   retryAfterMs?: number;
   inputText?: string;
   patterns?: PatternDefinition[];
+  model?: string;
+}
+
+interface GeminiModelsResponse {
+  models?: GeminiModelInfo[];
+  error?: string;
+  requestId?: string;
 }
 
 export interface AnalyzeTextResult {
@@ -26,6 +34,7 @@ export interface AnalyzeTextResult {
   requestId?: string;
   inputText?: string;
   patterns?: PatternDefinition[];
+  model?: string;
 }
 
 export class AnalysisRequestError extends Error {
@@ -166,6 +175,7 @@ const pollAnalysisJob = async (
         requestId: payload.requestId || job.requestId,
         inputText: payload.inputText,
         patterns: payload.patterns,
+        model: payload.model,
       };
     }
 
@@ -258,12 +268,59 @@ export const fetchCompletedAnalysisJob = async (jobId: string): Promise<AnalyzeT
     requestId: payload.requestId,
     inputText: payload.inputText,
     patterns: payload.patterns,
+    model: payload.model,
   };
 };
 
-export const analyzeTextForSlop = async (text: string, patterns: PatternDefinition[]): Promise<AnalyzeTextResult> => {
+export const fetchAvailableGeminiModels = async (): Promise<GeminiModelInfo[]> => {
+  const endpoint = "/.netlify/functions/gemini-models";
+  const startedAt = performance.now();
+
+  let response: Response;
+  try {
+    response = await fetch(endpoint, {
+      method: "GET",
+      headers: {
+        "Accept": "application/json",
+      },
+    });
+  } catch (error) {
+    const durationMs = Math.round(performance.now() - startedAt);
+    const message = error instanceof Error ? error.message : "Network request failed.";
+
+    throw new AnalysisRequestError(`Gemini models could not be reached: ${message}`, {
+      endpoint,
+      durationMs,
+      responseParseError: error instanceof Error ? error.name : undefined,
+    });
+  }
+
+  const durationMs = Math.round(performance.now() - startedAt);
+  const { payload, responseText, responseParseError } = await parseJsonResponse<GeminiModelsResponse>(response);
+
+  if (!response.ok || !Array.isArray(payload.models)) {
+    throw new AnalysisRequestError(payload.error || "Gemini models could not be loaded.", {
+      requestId: payload.requestId,
+      status: response.status,
+      statusText: response.statusText,
+      endpoint,
+      durationMs,
+      responseParseError,
+      responseBodySnippet: responseText.slice(0, 500),
+    });
+  }
+
+  return payload.models;
+};
+
+export const analyzeTextForSlop = async (
+  text: string,
+  patterns: PatternDefinition[],
+  model: string,
+): Promise<AnalyzeTextResult> => {
   const endpoint = "/.netlify/functions/analyze";
   const startedAt = performance.now();
+  const normalizedModel = normalizeGeminiModelName(model);
 
   let response: Response;
   try {
@@ -272,7 +329,7 @@ export const analyzeTextForSlop = async (text: string, patterns: PatternDefiniti
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ text, patterns }),
+      body: JSON.stringify({ text, patterns, model: normalizedModel }),
     });
   } catch (error) {
     const durationMs = Math.round(performance.now() - startedAt);
@@ -316,5 +373,6 @@ export const analyzeTextForSlop = async (text: string, patterns: PatternDefiniti
     requestId: payload.requestId,
     inputText: payload.inputText,
     patterns: payload.patterns,
+    model: payload.model,
   };
 };

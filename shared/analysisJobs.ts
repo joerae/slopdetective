@@ -25,6 +25,7 @@ export interface AnalysisJobSubmitResponse {
   statusUrl: string;
   retryAfterMs: number;
   requestId: string;
+  model?: string;
 }
 
 export interface AnalysisJobStatusResponse {
@@ -32,6 +33,7 @@ export interface AnalysisJobStatusResponse {
   status: AnalysisJobStatus;
   retryAfterMs?: number;
   requestId?: string;
+  model?: string;
   analysis?: SlopAnalysis;
   inputText?: string;
   patterns?: PatternDefinition[];

@@ -26,6 +26,15 @@ export interface SlopAnalysis {
   wordCount?: number; // Total words in the analyzed text
 }
 
+export interface GeminiModelInfo {
+  id: string;
+  name: string;
+  displayName: string;
+  description?: string;
+  inputTokenLimit?: number;
+  outputTokenLimit?: number;
+}
+
 export enum AnalysisStatus {
   IDLE = 'IDLE',
   ANALYZING = 'ANALYZING',

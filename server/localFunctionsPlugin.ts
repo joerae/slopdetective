@@ -3,13 +3,14 @@ import type { Plugin } from "vite";
 import { analyzeTextForSlopServer } from "./slopAnalyzer";
 import { classifyAnalysisError } from "./analysisErrors";
 import { createRequestId, logError, logInfo, logWarn } from "./logger";
-import { GEMINI_MODEL } from "../shared/geminiModel";
+import { GEMINI_MODEL, normalizeGeminiModelName } from "../shared/geminiModel";
 import { ANALYSIS_BACKGROUND_GEMINI_TIMEOUT_MS, truncateAnalysisInput } from "../shared/analysisLimits";
 import {
   ANALYSIS_JOB_RETENTION_DAYS,
   ANALYSIS_JOB_POLL_INTERVAL_MS,
   type AnalysisJobRecord,
 } from "../shared/analysisJobs";
+import type { GeminiModelInfo } from "../types";
 
 const MAX_BODY_SIZE = 1_000_000;
 
@@ -47,6 +48,76 @@ const sendJson = (response: ServerResponse, statusCode: number, payload: Record<
   response.statusCode = statusCode;
   response.setHeader("Content-Type", "application/json");
   response.end(JSON.stringify(payload));
+};
+
+interface GeminiModelsApiModel {
+  name?: string;
+  baseModelId?: string;
+  displayName?: string;
+  description?: string;
+  inputTokenLimit?: number;
+  outputTokenLimit?: number;
+  supportedGenerationMethods?: string[];
+}
+
+interface GeminiModelsApiResponse {
+  models?: GeminiModelsApiModel[];
+  error?: {
+    message?: string;
+  };
+}
+
+const stripModelResourcePrefix = (name: string) => name.replace(/^models\//, "");
+
+const mapGeminiModel = (model: GeminiModelsApiModel): GeminiModelInfo | null => {
+  const modelName = typeof model.name === "string" ? model.name : "";
+  const id = typeof model.baseModelId === "string" && model.baseModelId
+    ? model.baseModelId
+    : stripModelResourcePrefix(modelName);
+
+  if (!id) return null;
+
+  return {
+    id,
+    name: modelName || `models/${id}`,
+    displayName: model.displayName || id,
+    description: model.description,
+    inputTokenLimit: model.inputTokenLimit,
+    outputTokenLimit: model.outputTokenLimit,
+  };
+};
+
+const listGeminiModels = async (apiKey: string): Promise<GeminiModelInfo[]> => {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=${encodeURIComponent(apiKey)}`;
+  const geminiResponse = await fetch(url, {
+    method: "GET",
+    headers: {
+      "Accept": "application/json",
+    },
+  });
+
+  const responseText = await geminiResponse.text();
+  const payload = responseText ? JSON.parse(responseText) as GeminiModelsApiResponse : {};
+
+  if (!geminiResponse.ok) {
+    throw new Error(payload.error?.message || "Gemini models could not be loaded.");
+  }
+
+  const modelById = new Map<string, GeminiModelInfo>();
+  (payload.models || [])
+    .filter(model => model.supportedGenerationMethods?.includes("generateContent"))
+    .map(mapGeminiModel)
+    .filter((model): model is GeminiModelInfo => Boolean(model))
+    .forEach(model => {
+      if (!modelById.has(model.id)) {
+        modelById.set(model.id, model);
+      }
+    });
+
+  return Array.from(modelById.values()).sort((a, b) => {
+    const labelComparison = a.displayName.localeCompare(b.displayName);
+    return labelComparison || a.id.localeCompare(b.id);
+  });
 };
 
 const localAnalysisJobs = new Map<string, AnalysisJobRecord>();
@@ -92,12 +163,14 @@ const runLocalAnalysisJob = async ({
   requestId,
   text,
   patterns,
+  model,
   apiKey,
 }: {
   jobId: string;
   requestId: string;
   text: string;
   patterns: any[];
+  model: string;
   apiKey?: string;
 }) => {
   const startedAt = Date.now();
@@ -112,7 +185,7 @@ const runLocalAnalysisJob = async ({
       jobId,
       textLength: text.length,
       patternCount: patterns.length,
-      model: GEMINI_MODEL,
+      model,
       timeoutMs: ANALYSIS_BACKGROUND_GEMINI_TIMEOUT_MS,
       runtime: "vite-dev",
     });
@@ -120,6 +193,7 @@ const runLocalAnalysisJob = async ({
     const analysis = await analyzeTextForSlopServer({
       text,
       patterns,
+      model,
       apiKey,
       timeoutMs: ANALYSIS_BACKGROUND_GEMINI_TIMEOUT_MS,
     });
@@ -161,7 +235,7 @@ const runLocalAnalysisJob = async ({
       requestId,
       jobId,
       durationMs: Date.now() - startedAt,
-      model: GEMINI_MODEL,
+      model,
       errorCode: failure.errorCode,
       statusCode: failure.statusCode,
       retryable: failure.retryable,
@@ -180,6 +254,7 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
       if (pathname === "/.netlify/functions/analyze") {
         const requestId = createRequestId();
         const startedAt = Date.now();
+        let model = GEMINI_MODEL;
 
         if (request.method !== "POST") {
           logWarn("analysis_method_not_allowed", {
@@ -195,6 +270,7 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
           const body = await readJsonBody(request);
           const text = typeof body.text === "string" ? body.text : "";
           const patterns = Array.isArray(body.patterns) ? body.patterns : [];
+          model = normalizeGeminiModelName(body.model);
           const jobId = createRequestId();
 
           logInfo("analysis_started", {
@@ -202,7 +278,7 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
             jobId,
             textLength: text.length,
             patternCount: patterns.length,
-            model: GEMINI_MODEL,
+            model,
             runtime: "vite-dev",
           });
 
@@ -247,7 +323,7 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
             requestId,
             textLength: text.length,
             patternCount: patterns.length,
-            model: GEMINI_MODEL,
+            model,
             inputText: analysisText,
             patterns,
           });
@@ -257,6 +333,7 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
             requestId,
             text,
             patterns,
+            model,
             apiKey,
           });
 
@@ -273,6 +350,7 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
             statusUrl: `/.netlify/functions/analyze-status?jobId=${encodeURIComponent(jobId)}`,
             retryAfterMs: ANALYSIS_JOB_POLL_INTERVAL_MS,
             requestId,
+            model,
           });
         } catch (error) {
           const failure = classifyAnalysisError(error);
@@ -280,7 +358,7 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
           logError("analysis_failed", {
             requestId,
             durationMs: Date.now() - startedAt,
-            model: GEMINI_MODEL,
+            model,
             errorCode: failure.errorCode,
             statusCode: failure.statusCode,
             retryable: failure.retryable,
@@ -293,6 +371,7 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
             code: failure.errorCode,
             retryable: failure.retryable,
             requestId,
+            model,
           });
         }
 
@@ -336,6 +415,7 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
             jobId: job.id,
             status: job.status,
             requestId: job.requestId,
+            model: job.model,
             analysis: job.analysis,
             inputText: job.inputText,
             patterns: job.patterns,
@@ -348,6 +428,7 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
             jobId: job.id,
             status: job.status,
             requestId: job.requestId,
+            model: job.model,
             error: job.error || "Analysis failed. Please try again later.",
             code: job.code || "analysis_failed",
             retryable: job.retryable !== false,
@@ -359,8 +440,47 @@ export const createLocalFunctionsPlugin = (apiKey?: string): Plugin => ({
           jobId: job.id,
           status: job.status,
           requestId: job.requestId,
+          model: job.model,
           retryAfterMs: ANALYSIS_JOB_POLL_INTERVAL_MS,
         });
+        return;
+      }
+
+      if (pathname === "/.netlify/functions/gemini-models") {
+        const requestId = createRequestId();
+
+        if (request.method !== "GET") {
+          sendJson(response, 405, { error: "Method not allowed.", requestId });
+          return;
+        }
+
+        if (!apiKey) {
+          sendJson(response, 500, {
+            error: "Gemini models are not configured. The site owner needs to set GEMINI_API_KEY.",
+            requestId,
+          });
+          return;
+        }
+
+        try {
+          const models = await listGeminiModels(apiKey);
+          sendJson(response, 200, {
+            models,
+            requestId,
+          });
+        } catch (error) {
+          logError("gemini_models_failed", {
+            requestId,
+            runtime: "vite-dev",
+            error,
+          });
+
+          sendJson(response, 500, {
+            error: error instanceof Error ? error.message : "Gemini models could not be loaded.",
+            requestId,
+          });
+        }
+
         return;
       }
 

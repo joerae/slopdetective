@@ -1,6 +1,6 @@
 import { classifyAnalysisError } from "../../server/analysisErrors";
 import { createRequestId, logError, logInfo, logWarn } from "../../server/logger";
-import { GEMINI_MODEL } from "../../shared/geminiModel";
+import { GEMINI_MODEL, normalizeGeminiModelName } from "../../shared/geminiModel";
 import { ANALYSIS_JOB_POLL_INTERVAL_MS, type AnalysisJobRecord } from "../../shared/analysisJobs";
 import { cleanupOldAnalysisJobsIfDue, getAnalysisJobStore, writeAnalysisJob } from "../../server/analysisJobStore";
 import { ANALYSIS_JOB_TOKEN_HEADER, createAnalysisJobToken } from "../../server/analysisJobAuth";
@@ -40,6 +40,7 @@ const getFunctionOrigin = (event: any): string => {
 export const handler = async (event: any, context: any) => {
   const requestId = context?.awsRequestId || createRequestId();
   const startedAt = Date.now();
+  let model = GEMINI_MODEL;
 
   if (event.httpMethod !== "POST") {
     logWarn("analysis_method_not_allowed", {
@@ -57,6 +58,7 @@ export const handler = async (event: any, context: any) => {
     const body = safeParseBody(event.body);
     const text = typeof body.text === "string" ? body.text : "";
     const patterns = Array.isArray(body.patterns) ? body.patterns : [];
+    model = normalizeGeminiModelName(body.model);
     const jobId = createRequestId();
 
     logInfo("analysis_started", {
@@ -64,7 +66,7 @@ export const handler = async (event: any, context: any) => {
       jobId,
       textLength: text.length,
       patternCount: patterns.length,
-      model: GEMINI_MODEL,
+      model,
       deployContext: process.env.CONTEXT,
       siteName: process.env.SITE_NAME,
     });
@@ -116,7 +118,7 @@ export const handler = async (event: any, context: any) => {
       requestId,
       textLength: text.length,
       patternCount: patterns.length,
-      model: GEMINI_MODEL,
+      model,
       inputText: analysisText,
       patterns,
     };
@@ -135,6 +137,7 @@ export const handler = async (event: any, context: any) => {
         requestId,
         text,
         patterns,
+        model,
       }),
     });
 
@@ -165,6 +168,7 @@ export const handler = async (event: any, context: any) => {
       statusUrl: `/.netlify/functions/analyze-status?jobId=${encodeURIComponent(jobId)}`,
       retryAfterMs: ANALYSIS_JOB_POLL_INTERVAL_MS,
       requestId,
+      model,
     });
   } catch (error) {
     const failure = classifyAnalysisError(error);
@@ -172,7 +176,7 @@ export const handler = async (event: any, context: any) => {
     logError("analysis_failed", {
       requestId,
       durationMs: Date.now() - startedAt,
-      model: GEMINI_MODEL,
+      model,
       errorCode: failure.errorCode,
       statusCode: failure.statusCode,
       retryable: failure.retryable,
@@ -184,6 +188,7 @@ export const handler = async (event: any, context: any) => {
       code: failure.errorCode,
       retryable: failure.retryable,
       requestId,
+      model,
     });
   }
 };

@@ -54,6 +54,7 @@ export const handler = async (event: any, context: any) => {
         jobId: job.id,
         status: job.status,
         requestId: job.requestId,
+        model: job.model,
         analysis: job.analysis,
         inputText: job.inputText,
         patterns: job.patterns,
@@ -65,6 +66,7 @@ export const handler = async (event: any, context: any) => {
         jobId: job.id,
         status: job.status,
         requestId: job.requestId,
+        model: job.model,
         error: job.error || "Analysis failed. Please try again later.",
         code: job.code || "analysis_failed",
         retryable: job.retryable !== false,
@@ -75,6 +77,7 @@ export const handler = async (event: any, context: any) => {
       jobId: job.id,
       status: job.status,
       requestId: job.requestId,
+      model: job.model,
       retryAfterMs: ANALYSIS_JOB_POLL_INTERVAL_MS,
     });
   } catch (error) {

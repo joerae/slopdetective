@@ -5,6 +5,7 @@ export type AnalysisErrorCode =
   | "gemini_quota"
   | "gemini_unavailable"
   | "gemini_timeout"
+  | "gemini_model_unavailable"
   | "gemini_bad_response"
   | "analysis_failed";
 
@@ -64,7 +65,7 @@ const readStatusCode = (error: unknown): number | undefined => {
 };
 
 const readStatusCodeFromMessage = (message: string): number | undefined => {
-  const match = message.match(/\b(400|401|403|408|429|500|502|503|504)\b/);
+  const match = message.match(/\b(400|401|403|404|408|429|500|502|503|504)\b/);
   if (!match) return undefined;
 
   return Number.parseInt(match[1], 10);
@@ -129,6 +130,20 @@ export const classifyAnalysisError = (error: unknown): ClassifiedAnalysisError =
       errorCode: "gemini_auth",
       publicMessage: "Gemini rejected the site API key. The site owner needs to check the GEMINI_API_KEY setting.",
       statusCode: 502,
+      retryable: false,
+    };
+  }
+
+  if (
+    (statusCode === 400 || statusCode === 404 || lowerMessage.includes("not found")) &&
+    (lowerMessage.includes("model") ||
+      lowerMessage.includes("generatecontent") ||
+      lowerMessage.includes("supported generation"))
+  ) {
+    return {
+      errorCode: "gemini_model_unavailable",
+      publicMessage: "The selected Gemini model is unavailable or does not support text analysis. Choose another model and try again.",
+      statusCode: 400,
       retryable: false,
     };
   }

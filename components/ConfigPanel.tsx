@@ -1,21 +1,72 @@
 
-import React, { useRef } from 'react';
-import { Settings2, ChevronDown, ChevronUp, RotateCcw, Plus, Trash2, Save, Upload, AlertCircle } from 'lucide-react';
-import { PatternDefinition } from '../types';
+import React, { useMemo, useRef, useState } from 'react';
+import { Settings2, ChevronDown, ChevronUp, RotateCcw, Plus, Trash2, Save, Upload, AlertCircle, RefreshCw } from 'lucide-react';
+import { GeminiModelInfo, PatternDefinition } from '../types';
 import { DETECTION_PATTERNS } from '../data/patterns';
+import { fetchAvailableGeminiModels } from '../services/geminiService';
+import { GEMINI_MODEL_PRESETS, normalizeGeminiModelName } from '../shared/geminiModel';
 
 interface ConfigPanelProps {
   patterns: PatternDefinition[];
   onPatternsChange: (newPatterns: PatternDefinition[]) => void;
+  geminiModel: string;
+  onGeminiModelChange: (model: string) => void;
   isOpen: boolean;
   onToggle: () => void;
 }
 
-const ConfigPanel: React.FC<ConfigPanelProps> = ({ patterns, onPatternsChange, isOpen, onToggle }) => {
+const ConfigPanel: React.FC<ConfigPanelProps> = ({
+  patterns,
+  onPatternsChange,
+  geminiModel,
+  onGeminiModelChange,
+  isOpen,
+  onToggle,
+}) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [availableModels, setAvailableModels] = useState<GeminiModelInfo[]>([]);
+  const [modelListStatus, setModelListStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [modelListError, setModelListError] = useState<string | null>(null);
+
+  const normalizedGeminiModel = normalizeGeminiModelName(geminiModel);
+
+  const modelOptions = useMemo(() => {
+    const options = new Map<string, string>();
+
+    GEMINI_MODEL_PRESETS.forEach(model => {
+      options.set(model.id, model.label);
+    });
+
+    availableModels.forEach(model => {
+      const label = model.displayName && model.displayName !== model.id
+        ? `${model.displayName} (${model.id})`
+        : model.id;
+      options.set(model.id, label);
+    });
+
+    if (!options.has(normalizedGeminiModel)) {
+      options.set(normalizedGeminiModel, `Custom: ${normalizedGeminiModel}`);
+    }
+
+    return Array.from(options.entries()).map(([id, label]) => ({ id, label }));
+  }, [availableModels, normalizedGeminiModel]);
 
   const handleChange = (id: string, field: keyof PatternDefinition, value: string | number) => {
     onPatternsChange(patterns.map(p => p.id === id ? { ...p, [field]: value } : p));
+  };
+
+  const handleModelListRefresh = async () => {
+    setModelListStatus('loading');
+    setModelListError(null);
+
+    try {
+      const models = await fetchAvailableGeminiModels();
+      setAvailableModels(models);
+      setModelListStatus('success');
+    } catch (error) {
+      setModelListStatus('error');
+      setModelListError(error instanceof Error ? error.message : 'Gemini models could not be loaded.');
+    }
   };
 
   const handleReset = () => {
@@ -130,6 +181,66 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ patterns, onPatternsChange, i
               <RotateCcw className="w-3 h-3" />
               Reset to Defaults
             </button>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-xl p-4 mb-6 shadow-sm">
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Gemini Model</label>
+                  <p className="text-xs text-gray-500">Choose a known model, or enter any Gemini model ID.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleModelListRefresh}
+                  disabled={modelListStatus === 'loading'}
+                  className="text-xs inline-flex items-center justify-center gap-1 bg-white border border-gray-300 text-gray-600 px-3 py-1.5 rounded hover:border-teal-500 hover:text-teal-600 disabled:opacity-60 disabled:cursor-wait transition-all font-medium"
+                  title="Load Gemini models available to this API key"
+                >
+                  <RefreshCw className={`w-3 h-3 ${modelListStatus === 'loading' ? 'animate-spin' : ''}`} />
+                  {modelListStatus === 'loading' ? 'Loading' : 'Load Available'}
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Model Picker</label>
+                  <select
+                    value={normalizedGeminiModel}
+                    onChange={(event) => onGeminiModelChange(event.target.value)}
+                    className="w-full text-xs text-gray-700 bg-white border border-gray-200 rounded px-2 py-2 focus:border-teal-500 focus:ring-1 focus:ring-teal-500/20 outline-none"
+                  >
+                    {modelOptions.map(option => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">Custom Model ID</label>
+                  <input
+                    type="text"
+                    value={normalizedGeminiModel}
+                    onChange={(event) => onGeminiModelChange(event.target.value)}
+                    className="w-full text-xs text-gray-700 font-mono bg-gray-50 border border-gray-200 rounded px-2 py-2 focus:border-teal-500 focus:ring-1 focus:ring-teal-500/20 outline-none"
+                    placeholder="gemini-3.1-flash-lite"
+                  />
+                </div>
+              </div>
+
+              {modelListStatus === 'success' && (
+                <p className="text-[11px] text-teal-700 font-medium">
+                  Loaded {availableModels.length} text-capable Gemini models for this API key.
+                </p>
+              )}
+              {modelListStatus === 'error' && (
+                <p className="text-[11px] text-red-600 font-medium">
+                  {modelListError}
+                </p>
+              )}
+            </div>
           </div>
 
           <div className="space-y-6">
